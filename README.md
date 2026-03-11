@@ -41,6 +41,24 @@ Ablauf im BLE-Modus:
 3. Ein Gerät wird über Eingabe der Gerätenummer ausgewählt.
 4. PIN wird abgefragt (falls nicht per `--pin` übergeben).
 
+## Konfiguration per Datei
+
+Das Skript unterstützt eine optionale JSON-Konfigurationsdatei (Standardpfad: `meshcore_client_config.json`).
+CLI-Argumente überschreiben Werte aus der Konfigurationsdatei.
+
+Beispiel:
+
+```bash
+python scripts/meshcore_companion_client.py --config meshcore_client_config.example.json
+```
+
+Standardverhalten ohne expliziten Modus:
+
+- **BLE-Scan ist standardmäßig aktiv**.
+- Für seriellen Betrieb kann `com_port` in der Konfiguration gesetzt oder `--com-port` übergeben werden.
+
+Beispieldatei: `meshcore_client_config.example.json`
+
 ## Erwartete Ausgabe
 
 Nach erfolgreicher Verbindung und Authentifizierung (PIN-Login) wird z. B. ausgegeben:
