@@ -293,6 +293,52 @@ class TestAuthentifizieren(unittest.IsolatedAsyncioTestCase):
         client.commands.wait_for_events.assert_not_called()
 
 
+class TestAdvertPersistierung(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_advert_aufbereiten_bytes_wird_stabil_als_hex_aufbereitet(self):
+        log_daten = {
+            "adv_name": "Node-A",
+            "adv_key": "abcd1234",
+            "adv_lat": 52.52,
+            "adv_lon": 13.405,
+            "adv_type": 3,
+            "pkt_payload": b"\x01\x02",
+        }
+
+        advert = self.modul.advert_aufbereiten(log_daten)
+
+        self.assertEqual(advert["weitere_felder"]["pkt_payload"], "0102")
+
+    def test_advert_persistieren_bytes_serialisierbar(self):
+        log_daten = {
+            "adv_name": "Node-B",
+            "adv_key": "001122",
+            "adv_lat": 48.137,
+            "adv_lon": 11.575,
+            "adv_type": 3,
+            "pkt_payload": b"\x01\x02",
+        }
+        advert = self.modul.advert_aufbereiten(log_daten)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pfad = Path(tmp) / "adverts.jsonl"
+            self.modul.advert_persistieren(pfad, advert)
+
+            zeile = pfad.read_text(encoding="utf-8").strip()
+            eingelesen = json.loads(zeile)
+
+        self.assertEqual(eingelesen["weitere_felder"]["pkt_payload"], "0102")
+        self.assertEqual(eingelesen["name"], "Node-B")
+        self.assertEqual(eingelesen["public_key"], "001122")
+        self.assertEqual(eingelesen["koordinaten"], {"latitude": 48.137, "longitude": 11.575})
+        self.assertEqual(eingelesen["adv_typ"], 3)
+
+
 
 if __name__ == "__main__":
     unittest.main()
