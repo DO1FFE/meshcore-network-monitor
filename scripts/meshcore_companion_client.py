@@ -52,7 +52,7 @@ STANDARD_KONFIGURATION = {
     "timeout": 10.0,
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
-    "server_url": None,
+    "server_url": "https://mesh.do1ffe.de",
     "ble_retry_einmal": True,
 }
 
@@ -503,12 +503,16 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
             raise Verbindungsfehler(
                 f"Server meldete HTTP {antwort.status} bei Übertragung an {ziel}."
             )
+        print(
+            f"[INFO] Serverantwort HTTP {antwort.status} für Event-Typ {payload_typename or "<unbekannt>"}."
+        )
 
 
 def server_beim_start_pruefen(server_url: str) -> None:
     """Prüft beim Programmstart, ob der Server erreichbar ist und POST-Daten verarbeitet."""
     ziel = server_api_events_url(server_url)
     pruef_payload = json.dumps({}, ensure_ascii=False).encode("utf-8")
+    print(f"[INFO] Prüfe Server-Verbindung über {ziel} …")
     req = request.Request(
         ziel,
         data=pruef_payload,
@@ -529,6 +533,8 @@ def server_beim_start_pruefen(server_url: str) -> None:
             "Serverprüfung fehlgeschlagen: Unerwarteter HTTP-Status "
             f"{status} bei POST auf {ziel}."
         )
+
+    print(f"[INFO] Server erreichbar (HTTP {status}) und POST-Endpunkt antwortet.")
 
 
 def server_api_events_url(server_url: str) -> str:

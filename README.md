@@ -34,7 +34,7 @@ python scripts/meshcore_companion_client.py --ble-scan --server-url https://mesh
 Optionen:
 
 - `--ausgabe-datei`: lokale JSONL-Persistierung von ADVERTs
-- `--server-url`: Zielserver für ADVERT/PATH (POST auf `/api/events`)
+- `--server-url`: Zielserver für ADVERT/PATH (POST auf `/api/events`, Standard: `https://mesh.do1ffe.de`)
 - `--config`: JSON-Konfigurationsdatei (Standard: `meshcore_client_config.json`)
 
 ## Server starten

@@ -42,7 +42,7 @@ class TestKonfiguration(unittest.TestCase):
         optionen = self.modul.argumente_einlesen([])
         self.assertIsNone(optionen.com_port)
         self.assertTrue(optionen.ble_scan)
-        self.assertIsNone(optionen.server_url)
+        self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
 
     def test_konfiguration_com_port_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -595,9 +595,13 @@ class TestServerStartPruefung(unittest.TestCase):
         cls.modul = sys.modules["meshcore_companion_client"]
 
     def test_server_beim_start_pruefen_akzeptiert_status_400_als_erreichbar(self):
-        with patch.object(self.modul.request, "urlopen") as urlopen_mock:
+        with patch.object(self.modul.request, "urlopen") as urlopen_mock, patch("builtins.print") as print_mock:
             urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=400)
             self.modul.server_beim_start_pruefen("https://mesh.do1ffe.de")
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertTrue(any(ausgabe.startswith("[INFO] Prüfe Server-Verbindung über https://mesh.do1ffe.de/api/events") for ausgabe in ausgaben))
+        self.assertIn("[INFO] Server erreichbar (HTTP 400) und POST-Endpunkt antwortet.", ausgaben)
 
     def test_server_beim_start_pruefen_wirft_fehler_bei_netzwerkproblem(self):
         with patch.object(self.modul.request, "urlopen", side_effect=RuntimeError("down")):
@@ -618,13 +622,15 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
         with patch.object(self.modul.request, "Request") as request_mock, patch.object(
             self.modul.request,
             "urlopen",
-        ) as urlopen_mock:
+        ) as urlopen_mock, patch("builtins.print") as print_mock:
             urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
             self.modul.event_an_server_senden("https://server.example", log_daten)
 
         _, kwargs = request_mock.call_args
         payload = json.loads(kwargs["data"].decode("utf-8"))
         self.assertEqual(payload["payload_typename"], "PATH")
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("[INFO] Serverantwort HTTP 202 für Event-Typ PATH.", ausgaben)
 
 
     def test_event_an_server_senden_uebernimmt_path_aus_grossgeschriebenem_feld(self):
