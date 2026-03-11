@@ -72,6 +72,47 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertNotIn("a1", prefixe)
 
+    def test_speichere_event_entfernt_genau_prefix_ab(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", datei)
+            prefixe_vorher = self.modul.lese_unbenutzte_prefixe(datei)
+
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-AB",
+                    "adv_key": "ab77ff00",
+                }
+            )
+
+            prefixe_nachher = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertIn("aa", prefixe_nachher)
+        self.assertNotIn("ab", prefixe_nachher)
+        self.assertIn("ac", prefixe_nachher)
+        self.assertEqual(len(prefixe_vorher) - len(prefixe_nachher), 1)
+
+    def test_doppelte_advert_events_bleiben_fuer_unbenutzte_prefixe_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", datei)
+
+            ereignis = {
+                "payload_typename": "ADVERT",
+                "adv_name": "R-AB",
+                "adv_key": "ab77ff00",
+            }
+            db.speichere_event(ereignis)
+            prefixe_nach_erstem_event = self.modul.lese_unbenutzte_prefixe(datei)
+
+            db.speichere_event(ereignis)
+            prefixe_nach_zweitem_event = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertEqual(prefixe_nach_erstem_event, prefixe_nach_zweitem_event)
+        self.assertNotIn("ab", prefixe_nach_zweitem_event)
+        self.assertEqual(len(prefixe_nach_zweitem_event), 255)
+
     def test_datenbank_speichert_nur_advert_und_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
@@ -156,14 +197,14 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "1111aaaa",
                     "adv_lat": 50.0,
                     "adv_lon": 8.0,
-                    "path": "a1b2",
+                    "path": "ab12",
                 }
             )
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
-                    "adv_name": "A1B2-Nah",
-                    "adv_key": "a1b2bbbb",
+                    "adv_name": "AB12-Nah",
+                    "adv_key": "ab12bbbb",
                     "adv_lat": 50.05,
                     "adv_lon": 8.0,
                 }
@@ -171,8 +212,8 @@ class TestAdvertServer(unittest.TestCase):
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
-                    "adv_name": "A1B2-Fern",
-                    "adv_key": "a1b2cccc",
+                    "adv_name": "AB12-Fern",
+                    "adv_key": "ab12cccc",
                     "adv_lat": 50.9,
                     "adv_lon": 8.0,
                 }
@@ -182,8 +223,8 @@ class TestAdvertServer(unittest.TestCase):
 
         id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
         kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
-        self.assertIn((id_nach_name["Quelle"], id_nach_name["A1B2-Nah"]), kanten)
-        self.assertNotIn((id_nach_name["Quelle"], id_nach_name["A1B2-Fern"]), kanten)
+        self.assertIn((id_nach_name["Quelle"], id_nach_name["AB12-Nah"]), kanten)
+        self.assertNotIn((id_nach_name["Quelle"], id_nach_name["AB12-Fern"]), kanten)
 
     def test_map_daten_kante_unter_20_km_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -195,14 +236,14 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "1111aaaa",
                     "adv_lat": 50.0,
                     "adv_lon": 8.0,
-                    "path": "2222",
+                    "path": "cd34",
                 }
             )
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
                     "adv_name": "Ziel-Nah",
-                    "adv_key": "2222bbbb",
+                    "adv_key": "cd34bbbb",
                     "adv_lat": 50.09,
                     "adv_lon": 8.0,
                 }
@@ -224,14 +265,14 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "1111aaaa",
                     "adv_lat": 50.0,
                     "adv_lon": 8.0,
-                    "path": "2222",
+                    "path": "cd34",
                 }
             )
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
                     "adv_name": "Ziel-Fern",
-                    "adv_key": "2222bbbb",
+                    "adv_key": "cd34bbbb",
                     "adv_lat": 50.4,
                     "adv_lon": 8.0,
                 }

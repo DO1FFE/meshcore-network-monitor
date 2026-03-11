@@ -51,12 +51,18 @@ python scripts/meshcore_advert_server.py --host 0.0.0.0 --port 8023 --db data/me
 
 ## Kartenlogik
 
-- Repeater-Identität basiert auf dem **ersten Byte** des Public Keys (`prefix`, 2 Hexzeichen)
+- Repeater-Identität basiert auf den **ersten 2 Zeichen** des Public Keys (`prefix`, 2 Hexzeichen)
 - Marker zeigen:
   - Repeater-Name
   - Public Key
-  - Prefix (erstes Byte)
-- Verbindungen werden aus `path`-Segmenten (weiterhin je 4 Hexzeichen) als Kanten gezeichnet; zur Zuordnung auf Repeater wird daraus jeweils das 2-hexstellige Prefix (erstes Byte) verwendet
+  - Prefix (erste 2 Zeichen)
+- Verbindungen werden aus `path`-Segmenten (weiterhin je 4 Hexzeichen) als Kanten gezeichnet; zur Zuordnung auf Repeater wird daraus jeweils das 2-hexstellige Prefix (erste 2 Zeichen) verwendet
+
+## Datei unbenutzter Prefixe (`00..ff`)
+
+- Beim Start legt der Server eine Datei mit allen möglichen Prefix-Werten von `00` bis `ff` (256 Einträge) an, falls sie noch nicht existiert.
+- Sobald ein ADVERT mit Prefix empfangen wird, wird genau dieser Prefix aus der Datei entfernt.
+- Wiederholte ADVERTs mit demselben Prefix sind idempotent und verändern den Zustand danach nicht erneut.
 
 ## Datenbank
 
