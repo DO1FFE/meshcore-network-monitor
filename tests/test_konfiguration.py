@@ -218,6 +218,23 @@ class TestAuthentifizieren(unittest.IsolatedAsyncioTestCase):
         client.commands.send_login.assert_awaited_once()
         client.commands.wait_for_events.assert_awaited_once()
 
+
+    async def test_authentifizieren_erlaubt_fallback_bei_err_code_not_found(self):
+        client = SimpleNamespace(
+            self_info={"public_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"},
+            commands=SimpleNamespace(
+                send_login=AsyncMock(return_value=SimpleNamespace(
+                    type=self.modul.EventType.ERROR,
+                    payload={"error_code": 2, "code_string": "ERR_CODE_NOT_FOUND"},
+                )),
+                wait_for_events=AsyncMock(),
+            ),
+        )
+
+        await self.modul.authentifizieren(client, "123456")
+
+        client.commands.send_login.assert_awaited_once()
+        client.commands.wait_for_events.assert_not_called()
     async def test_authentifizieren_meldet_fehler_wenn_send_login_error_liefert(self):
         client = SimpleNamespace(
             self_info={"public_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"},
