@@ -473,6 +473,73 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
         self.assertIn("\n[INFO] RX-Log beendet.", ausgaben)
 
 
+class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_kompakte_server_info_formatiert_und_kuerzt_felder(self):
+        langer_pfad = [f"hop-{index}" for index in range(1, 20)]
+        log_daten = {
+            "payload_typename": "ADVERT",
+            "adv_key": "00112233445566778899aabbccddeeff",
+            "path": langer_pfad,
+            "adv_name": "MeshNode-Berlin-Mitte",
+        }
+
+        text = self.modul.kompakte_server_info(log_daten)
+
+        self.assertIn("typ=ADVERT", text)
+        self.assertIn("key=0011223344556677889…", text)
+        self.assertIn("name=MeshNode-Berlin-Mitte", text)
+        self.assertIn("path=", text)
+        self.assertIn("…", text)
+
+    def test_kompakte_server_info_nutzt_public_key_und_ohne_name(self):
+        log_daten = {
+            "payload_typename": "PATH",
+            "public_key": "abcd",
+            "path": ["A", "B", "C"],
+        }
+
+        text = self.modul.kompakte_server_info(log_daten)
+
+        self.assertEqual(text, "typ=PATH | key=abcd | path=A -> B -> C")
+
+    async def test_rx_log_modus_gibt_info_nach_erfolgreichem_post_aus(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        client = SimpleNamespace(subscribe=subscribe)
+        ereignis = SimpleNamespace(
+            payload={
+                "payload_typename": "ADVERT",
+                "adv_key": "00112233445566778899aabbccddeeff",
+                "adv_name": "Node-A",
+                "path": ["hop-1", "hop-2", "hop-3"],
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)), patch.object(
+            self.modul.asyncio, "to_thread", AsyncMock(return_value=None)
+        ), patch.object(self.modul, "advert_persistieren"), patch("builtins.print") as print_mock:
+            await self.modul.rx_log_modus(client, Path("out.jsonl"), "https://server.example")
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertTrue(
+            any(ausgabe.startswith("[INFO] An Server übertragen: typ=ADVERT") for ausgabe in ausgaben)
+        )
+
+
 
 if __name__ == "__main__":
     unittest.main()
