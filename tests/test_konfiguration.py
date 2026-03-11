@@ -198,8 +198,8 @@ class TestAdvertSerialisierung(unittest.TestCase):
             )
         )
 
-    def test_soll_an_server_gesendet_werden_fuer_nicht_path_typ_mit_path_wahr(self):
-        self.assertTrue(
+    def test_soll_an_server_gesendet_werden_fuer_nicht_path_typ_mit_path_falsch(self):
+        self.assertFalse(
             self.modul.soll_an_server_gesendet_werden(
                 {"payload_typename": "TEXT", "path": ["hop-1"]}
             )
@@ -212,17 +212,24 @@ class TestAdvertSerialisierung(unittest.TestCase):
             )
         )
 
-    def test_soll_an_server_gesendet_werden_bei_leerem_path_ist_wahr(self):
-        self.assertTrue(
+    def test_soll_an_server_gesendet_werden_bei_leerem_path_ist_falsch(self):
+        self.assertFalse(
             self.modul.soll_an_server_gesendet_werden(
                 {"payload_typename": "TEXT", "path": []}
             )
         )
 
-    def test_soll_an_server_gesendet_werden_erkennt_grosses_path_feld(self):
-        self.assertTrue(
+    def test_soll_an_server_gesendet_werden_ignoiert_grosses_path_feld_ohne_path_typ(self):
+        self.assertFalse(
             self.modul.soll_an_server_gesendet_werden(
                 {"payload_typename": "TEXT", "PATH": "a1b2 c3d4"}
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_fuer_path_typ_wahr(self):
+        self.assertTrue(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "PATH", "PATH": "a1b2 c3d4"}
             )
         )
 
