@@ -207,6 +207,14 @@ async def authentifizieren(client: MeshCore, pin: str) -> None:
         raise Verbindungsfehler("Authentifizierung fehlgeschlagen: Login-Befehl ohne Antwort.")
 
     if sende_antwort.type == EventType.ERROR:
+        payload = sende_antwort.payload if isinstance(sende_antwort.payload, dict) else {}
+        if payload.get("code_string") == "ERR_CODE_NOT_FOUND":
+            print(
+                "[WARNUNG] Login-Befehl wird von diesem Knoten/Firmwarestand nicht "
+                "unterstützt (ERR_CODE_NOT_FOUND). Es wird ohne expliziten Login "
+                "fortgefahren."
+            )
+            return
         raise Verbindungsfehler(
             f"Authentifizierung fehlgeschlagen: Login-Befehl wurde abgelehnt ({sende_antwort.payload})."
         )
