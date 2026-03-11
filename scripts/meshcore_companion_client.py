@@ -37,6 +37,16 @@ class CliOptionen:
     pin: str | None
 
 
+STANDARD_KONFIGURATION = {
+    "com_port": None,
+    "ble_scan": True,
+    "baudrate": 115200,
+    "timeout": 10.0,
+    "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
+    "pin": None,
+}
+
+
 async def ble_geraet_interaktiv_auswaehlen(timeout: float) -> Any:
     """Scannt BLE-Geräte und fragt interaktiv nach einer Auswahl."""
     if BleakScanner is None:
@@ -232,27 +242,93 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
         print("\n[INFO] RX-Log beendet.")
 
 
-def argumente_einlesen() -> CliOptionen:
-    """Parst CLI-Argumente und validiert die Modi."""
+def konfiguration_laden(konfigurations_pfad: Path) -> dict[str, Any]:
+    """Lädt optionale Konfiguration aus JSON und kombiniert sie mit Standardwerten."""
+    konfiguration = dict(STANDARD_KONFIGURATION)
+    if not konfigurations_pfad.exists():
+        return konfiguration
+
+    try:
+        inhalt = json.loads(konfigurations_pfad.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise Verbindungsfehler(
+            f"Konfigurationsdatei ist kein gültiges JSON: {konfigurations_pfad}"
+        ) from exc
+
+    if not isinstance(inhalt, dict):
+        raise Verbindungsfehler(
+            f"Konfigurationsdatei muss ein JSON-Objekt enthalten: {konfigurations_pfad}"
+        )
+
+    for schluessel in STANDARD_KONFIGURATION:
+        if schluessel in inhalt:
+            konfiguration[schluessel] = inhalt[schluessel]
+    return konfiguration
+
+
+def optionen_aus_argumenten_und_konfiguration(
+    args: argparse.Namespace, konfiguration: dict[str, Any]
+) -> CliOptionen:
+    """Priorisiert CLI-Argumente vor Konfiguration und validiert die Startmodi."""
+    com_port = args.com_port if args.com_port is not None else konfiguration.get("com_port")
+    ble_scan = args.ble_scan if args.ble_scan is not None else konfiguration.get("ble_scan", True)
+
+    if args.com_port is not None and args.ble_scan is None:
+        ble_scan = False
+    if args.ble_scan is True and args.com_port is None:
+        com_port = None
+
+    if com_port and ble_scan:
+        raise Verbindungsfehler(
+            "Ungültige Konfiguration: --com-port und BLE-Scan dürfen nicht gleichzeitig aktiv sein."
+        )
+
+    if not com_port and not ble_scan:
+        ble_scan = True
+
+    baudrate = args.baudrate if args.baudrate is not None else konfiguration.get("baudrate", 115200)
+    timeout = args.timeout if args.timeout is not None else konfiguration.get("timeout", 10.0)
+    ausgabe_datei = args.ausgabe_datei if args.ausgabe_datei is not None else konfiguration.get("ausgabe_datei")
+    pin = args.pin if args.pin is not None else konfiguration.get("pin")
+
+    return CliOptionen(
+        com_port=com_port,
+        baudrate=int(baudrate),
+        ble_scan=bool(ble_scan),
+        timeout=float(timeout),
+        ausgabe_pfad=Path(ausgabe_datei),
+        pin=pin,
+    )
+
+
+def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
+    """Parst CLI-Argumente und kombiniert sie mit einer optionalen Konfigurationsdatei."""
     parser = argparse.ArgumentParser(
         description="MeshCore Companion Client (COM oder BLE-Scan)"
     )
-    gruppe = parser.add_mutually_exclusive_group(required=True)
-    gruppe.add_argument(
+    parser.add_argument(
         "--com-port",
         help="Serieller COM-Port (z. B. COM3 unter Windows)",
     )
-    gruppe.add_argument(
+    parser.add_argument(
         "--ble-scan",
         action="store_true",
+        default=None,
         help="BLE-Scan starten und Gerät interaktiv auswählen",
     )
-    parser.add_argument("--baudrate", type=int, default=115200, help="Baudrate für seriellen Modus")
-    parser.add_argument("--timeout", type=float, default=10.0, help="Timeout in Sekunden")
+    parser.add_argument(
+        "--kein-ble-scan",
+        dest="ble_scan",
+        action="store_false",
+        default=None,
+        help="BLE-Scan explizit deaktivieren (z. B. bei rein serieller Konfiguration)",
+    )
+    parser.add_argument("--baudrate", type=int, default=None, help="Baudrate für seriellen Modus")
+    parser.add_argument("--timeout", type=float, default=None, help="Timeout in Sekunden")
     parser.add_argument(
         "--ausgabe-datei",
         type=Path,
-        default=AUSGABE_PFAD_STANDARD,
+        default=None,
         help="Pfad zur JSONL-Ausgabedatei für REPEATER-ADVERTs",
     )
     parser.add_argument(
@@ -260,16 +336,16 @@ def argumente_einlesen() -> CliOptionen:
         default=None,
         help="PIN für Authentifizierung (wenn nicht gesetzt, wird interaktiv abgefragt)",
     )
-
-    args = parser.parse_args()
-    return CliOptionen(
-        com_port=args.com_port,
-        baudrate=args.baudrate,
-        ble_scan=args.ble_scan,
-        timeout=args.timeout,
-        ausgabe_pfad=args.ausgabe_datei,
-        pin=args.pin,
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("meshcore_client_config.json"),
+        help="Pfad zu einer optionalen JSON-Konfigurationsdatei",
     )
+
+    args = parser.parse_args(argv)
+    konfiguration = konfiguration_laden(args.config)
+    return optionen_aus_argumenten_und_konfiguration(args, konfiguration)
 
 
 async def async_hauptprogramm() -> int:
