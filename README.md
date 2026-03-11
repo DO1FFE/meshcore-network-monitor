@@ -51,12 +51,12 @@ python scripts/meshcore_advert_server.py --host 0.0.0.0 --port 8023 --db data/me
 
 ## Kartenlogik
 
-- Repeater-Identität basiert auf den **ersten 2 Bytes** des Public Keys (`prefix`, 4 Hexzeichen)
+- Repeater-Identität basiert auf dem **ersten Byte** des Public Keys (`prefix`, 2 Hexzeichen)
 - Marker zeigen:
   - Repeater-Name
   - Public Key
-  - Prefix (erste 2 Bytes)
-- Verbindungen werden aus `path`-Segmenten (je 4 Hexzeichen) als Kanten gezeichnet
+  - Prefix (erstes Byte)
+- Verbindungen werden aus `path`-Segmenten (weiterhin je 4 Hexzeichen) als Kanten gezeichnet; zur Zuordnung auf Repeater wird daraus jeweils das 2-hexstellige Prefix (erstes Byte) verwendet
 
 ## Datenbank
 

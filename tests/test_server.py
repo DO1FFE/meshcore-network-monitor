@@ -17,8 +17,9 @@ class TestAdvertServer(unittest.TestCase):
         cls.modul = module
 
     def test_prefix_aus_public_key_liefert_ersten_hex_prefix(self):
-        self.assertEqual(self.modul.prefix_aus_public_key("a1b2c3d4"), "a1b2")
-        self.assertIsNone(self.modul.prefix_aus_public_key("ab"))
+        self.assertEqual(self.modul.prefix_aus_public_key("a1b2c3d4"), "a1")
+        self.assertEqual(self.modul.prefix_aus_public_key("ab"), "ab")
+        self.assertIsNone(self.modul.prefix_aus_public_key("a"))
 
     def test_pfadsegmente_liest_4er_hexsegmente(self):
         segmente = self.modul.pfadsegmente("a1b2->c3d4 / eeff")
@@ -64,7 +65,7 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(len(daten["nodes"]), 2)
         self.assertTrue(all("id" in knoten for knoten in daten["nodes"]))
-        self.assertEqual({k["prefix"] for k in daten["nodes"]}, {"a1b2", "c3d4"})
+        self.assertEqual({k["prefix"] for k in daten["nodes"]}, {"a1", "c3"})
         kanten = {(k["von_id"], k["nach_id"]) for k in daten["edges"]}
         self.assertTrue(any(von != nach for von, nach in kanten))
 
@@ -92,7 +93,7 @@ class TestAdvertServer(unittest.TestCase):
 
             daten = db.map_daten()
 
-            knoten_mit_prefix = [n for n in daten["nodes"] if "a1b2" in (n.get("prefixes") or [])]
+            knoten_mit_prefix = [n for n in daten["nodes"] if "a1" in (n.get("prefixes") or [])]
             self.assertEqual(len(knoten_mit_prefix), 2)
             ids = {n["id"] for n in knoten_mit_prefix}
             self.assertEqual(len(ids), 2)
