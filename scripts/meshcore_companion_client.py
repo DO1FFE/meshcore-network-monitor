@@ -416,6 +416,36 @@ def soll_an_server_gesendet_werden(log_daten: dict[str, Any]) -> bool:
     return ist_advert(log_daten) or bool(log_daten.get("path"))
 
 
+def _wert_gekuerzt_formatieren(wert: Any, max_laenge: int) -> str:
+    """Formatiert einen Wert robust als gekürzten String."""
+    if wert is None:
+        return "-"
+
+    if isinstance(wert, (list, tuple)):
+        text = " -> ".join(str(eintrag) for eintrag in wert)
+    else:
+        text = str(wert)
+
+    if len(text) <= max_laenge:
+        return text
+    if max_laenge <= 1:
+        return "…"
+    return text[: max_laenge - 1] + "…"
+
+
+def kompakte_server_info(log_daten: dict[str, Any]) -> str:
+    """Erzeugt eine kompakte Infozeile zu erfolgreich gesendeten Daten."""
+    payload_typ = _wert_gekuerzt_formatieren(log_daten.get("payload_typename"), 24)
+    schluessel = log_daten.get("adv_key") or log_daten.get("public_key")
+    schluessel_text = _wert_gekuerzt_formatieren(schluessel, 20)
+    pfad_text = _wert_gekuerzt_formatieren(log_daten.get("path"), 60)
+
+    teile = [f"typ={payload_typ}", f"key={schluessel_text}", f"path={pfad_text}"]
+    if log_daten.get("adv_name"):
+        teile.append(f"name={_wert_gekuerzt_formatieren(log_daten.get('adv_name'), 24)}")
+    return " | ".join(teile)
+
+
 def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
     ziel = server_url.rstrip("/") + "/api/events"
@@ -442,7 +472,7 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | N
     async def _event_asynchron_an_server_senden(log_daten: dict[str, Any]) -> None:
         try:
             await asyncio.to_thread(event_an_server_senden, server_url, log_daten)
-            print(f"[INFO] {log_daten.get('payload_typename')} an Server übertragen.")
+            print(f"[INFO] An Server übertragen: {kompakte_server_info(log_daten)}")
         except Exception as exc:
             print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
 
