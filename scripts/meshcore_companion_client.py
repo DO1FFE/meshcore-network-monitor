@@ -432,9 +432,26 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
 
 async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | None = None) -> None:
     """Kontinuierlicher RX-Log-Modus mit Persistierung von REPEATER-ADVERTs."""
+    uebertragungs_tasks: set[asyncio.Task[None]] = set()
+
+    async def _event_asynchron_an_server_senden(log_daten: dict[str, Any]) -> None:
+        try:
+            await asyncio.to_thread(event_an_server_senden, server_url, log_daten)
+            print(f"[INFO] {log_daten.get('payload_typename')} an Server übertragen.")
+        except Exception as exc:
+            print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
+
+    def _uebertragung_task_registrieren(log_daten: dict[str, Any]) -> None:
+        task = asyncio.create_task(_event_asynchron_an_server_senden(log_daten))
+        uebertragungs_tasks.add(task)
+        task.add_done_callback(uebertragungs_tasks.discard)
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
+
+        if server_url and (ist_advert(log_daten) or ist_path(log_daten)):
+            _uebertragung_task_registrieren(log_daten)
+
         paket = {
             "zeit": datetime.now(timezone.utc).isoformat(),
             "payload_typ": log_daten.get("payload_typename"),
@@ -461,13 +478,6 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | N
             print()
             print()
 
-        if server_url and (ist_advert(log_daten) or ist_path(log_daten)):
-            try:
-                await asyncio.to_thread(event_an_server_senden, server_url, log_daten)
-                print(f"[INFO] {log_daten.get('payload_typename')} an Server übertragen.")
-            except Exception as exc:
-                print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
-
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 
     print("[INFO] RX-Log läuft. Mit Strg+C beenden.")
@@ -475,6 +485,8 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | N
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
+        if uebertragungs_tasks:
+            await asyncio.gather(*uebertragungs_tasks, return_exceptions=True)
         print("\n[INFO] RX-Log beendet.")
 
 
