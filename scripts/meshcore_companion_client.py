@@ -196,15 +196,50 @@ async def authentifizieren(client: MeshCore, pin: str) -> None:
         )
 
     try:
-        antwort = await asyncio.wait_for(client.commands.send_login(oeffentlicher_schluessel, pin), timeout=8.0)
+        sende_antwort = await asyncio.wait_for(
+            client.commands.send_login(oeffentlicher_schluessel, pin),
+            timeout=8.0,
+        )
     except TimeoutError as exc:
         raise Verbindungsfehler("Authentifizierung ist in ein Timeout gelaufen.") from exc
+
+    if sende_antwort is None:
+        raise Verbindungsfehler("Authentifizierung fehlgeschlagen: Login-Befehl ohne Antwort.")
+
+    if sende_antwort.type == EventType.ERROR:
+        raise Verbindungsfehler(
+            f"Authentifizierung fehlgeschlagen: Login-Befehl wurde abgelehnt ({sende_antwort.payload})."
+        )
+
+    if sende_antwort.type != EventType.MSG_SENT:
+        raise Verbindungsfehler(
+            "Authentifizierung fehlgeschlagen: Unerwartete Antwort auf send_login "
+            f"({sende_antwort.type})."
+        )
+
+    try:
+        antwort = await asyncio.wait_for(
+            client.commands.wait_for_events(
+                [EventType.LOGIN_SUCCESS, EventType.LOGIN_FAILED, EventType.ERROR],
+                timeout=8.0,
+            ),
+            timeout=9.0,
+        )
+    except TimeoutError as exc:
+        raise Verbindungsfehler(
+            "Authentifizierung fehlgeschlagen: Keine Login-Bestätigung erhalten (Timeout)."
+        ) from exc
 
     if antwort is None:
         raise Verbindungsfehler("Authentifizierung fehlgeschlagen: keine Antwort erhalten.")
 
     if antwort.type == EventType.LOGIN_FAILED:
         raise Verbindungsfehler("Authentifizierung fehlgeschlagen: ungültige PIN.")
+
+    if antwort.type == EventType.ERROR:
+        raise Verbindungsfehler(
+            f"Authentifizierung fehlgeschlagen: Login-Bestätigung mit Fehler ({antwort.payload})."
+        )
 
     if antwort.type != EventType.LOGIN_SUCCESS:
         raise Verbindungsfehler(f"Unerwartete Antwort bei Login: {antwort.type}")

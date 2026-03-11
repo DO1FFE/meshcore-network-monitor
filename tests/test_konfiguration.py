@@ -18,6 +18,7 @@ class TestKonfiguration(unittest.TestCase):
             LOGIN_FAILED = "LOGIN_FAILED"
             LOGIN_SUCCESS = "LOGIN_SUCCESS"
             ERROR = "ERROR"
+            MSG_SENT = "MSG_SENT"
             RX_LOG_DATA = "RX_LOG_DATA"
 
         class _DummyMeshCore:
@@ -193,6 +194,44 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Zieladresse=FF:EE:DD:CC:BB:AA", meldung)
         self.assertIn("Timeout=6.0s", meldung)
         self.assertIn("Mögliche Ursachen", meldung)
+
+
+
+class TestAuthentifizieren(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_authentifizieren_wartet_auf_login_success_event(self):
+        client = SimpleNamespace(
+            self_info={"public_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"},
+            commands=SimpleNamespace(
+                send_login=AsyncMock(return_value=SimpleNamespace(type=self.modul.EventType.MSG_SENT, payload={})),
+                wait_for_events=AsyncMock(return_value=SimpleNamespace(type=self.modul.EventType.LOGIN_SUCCESS, payload={})),
+            ),
+        )
+
+        await self.modul.authentifizieren(client, "123456")
+
+        client.commands.send_login.assert_awaited_once()
+        client.commands.wait_for_events.assert_awaited_once()
+
+    async def test_authentifizieren_meldet_fehler_wenn_send_login_error_liefert(self):
+        client = SimpleNamespace(
+            self_info={"public_key": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"},
+            commands=SimpleNamespace(
+                send_login=AsyncMock(return_value=SimpleNamespace(type=self.modul.EventType.ERROR, payload={"reason": "foo"})),
+                wait_for_events=AsyncMock(),
+            ),
+        )
+
+        with self.assertRaises(self.modul.Verbindungsfehler) as context:
+            await self.modul.authentifizieren(client, "123456")
+
+        self.assertIn("Login-Befehl wurde abgelehnt", str(context.exception))
+        client.commands.wait_for_events.assert_not_called()
 
 
 
