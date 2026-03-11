@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Any
+from urllib import request
 
 from meshcore import EventType, MeshCore
 
@@ -39,6 +40,7 @@ class CliOptionen:
     timeout: float
     ausgabe_pfad: Path
     pin: str | None
+    server_url: str | None
     ble_retry_einmal: bool = True
 
 
@@ -49,6 +51,7 @@ STANDARD_KONFIGURATION = {
     "timeout": 10.0,
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
+    "server_url": None,
     "ble_retry_einmal": True,
 }
 
@@ -401,6 +404,25 @@ def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
     return json_sicherer_wert(daten)
 
 
+
+
+def ist_path(log_daten: dict[str, Any]) -> bool:
+    """Prüft, ob ein RX-Log-Eintrag ein PATH ist."""
+    return log_daten.get("payload_typename") == "PATH"
+
+
+def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
+    """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
+    ziel = server_url.rstrip("/") + "/api/events"
+    roh = json.dumps(json_sicherer_wert(log_daten), ensure_ascii=False).encode("utf-8")
+    req = request.Request(ziel, data=roh, headers={"Content-Type": "application/json"}, method="POST")
+    with request.urlopen(req, timeout=5.0) as antwort:
+        if antwort.status >= 300:
+            raise Verbindungsfehler(
+                f"Server meldete HTTP {antwort.status} bei Übertragung an {ziel}."
+            )
+
+
 def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
     """Speichert einen Datensatz als JSONL-Zeile."""
     pfad.parent.mkdir(parents=True, exist_ok=True)
@@ -408,7 +430,7 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
-async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
+async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | None = None) -> None:
     """Kontinuierlicher RX-Log-Modus mit Persistierung von REPEATER-ADVERTs."""
 
     async def bei_rx_log(event) -> None:
@@ -438,6 +460,13 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
             )
             print()
             print()
+
+        if server_url and (ist_advert(log_daten) or ist_path(log_daten)):
+            try:
+                await asyncio.to_thread(event_an_server_senden, server_url, log_daten)
+                print(f"[INFO] {log_daten.get('payload_typename')} an Server übertragen.")
+            except Exception as exc:
+                print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
 
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 
@@ -497,6 +526,7 @@ def optionen_aus_argumenten_und_konfiguration(
     timeout = args.timeout if args.timeout is not None else konfiguration.get("timeout", 10.0)
     ausgabe_datei = args.ausgabe_datei if args.ausgabe_datei is not None else konfiguration.get("ausgabe_datei")
     pin = args.pin if args.pin is not None else konfiguration.get("pin")
+    server_url = args.server_url if args.server_url is not None else konfiguration.get("server_url")
     ble_retry_einmal = bool(konfiguration.get("ble_retry_einmal", True))
 
     return CliOptionen(
@@ -506,6 +536,7 @@ def optionen_aus_argumenten_und_konfiguration(
         timeout=float(timeout),
         ausgabe_pfad=Path(ausgabe_datei),
         pin=pin,
+        server_url=server_url,
         ble_retry_einmal=ble_retry_einmal,
     )
 
@@ -546,6 +577,11 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
         help="PIN für Authentifizierung (wenn nicht gesetzt, wird interaktiv abgefragt)",
     )
     parser.add_argument(
+        "--server-url",
+        default=None,
+        help="Basis-URL des ADVERT/PATH-Servers, z. B. https://mesh.do1ffe.de",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path("meshcore_client_config.json"),
@@ -572,7 +608,7 @@ async def async_hauptprogramm() -> int:
         client = await meshcore_verbinden(optionen)
         await authentifizieren(client, optionen.pin)
         await geraeteinformationen_ausgeben(client)
-        await rx_log_modus(client, optionen.ausgabe_pfad)
+        await rx_log_modus(client, optionen.ausgabe_pfad, optionen.server_url)
         return 0
     except Verbindungsfehler as exc:
         print(f"[FEHLER] {exc}")

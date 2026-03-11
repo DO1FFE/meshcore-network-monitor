@@ -42,6 +42,7 @@ class TestKonfiguration(unittest.TestCase):
         optionen = self.modul.argumente_einlesen([])
         self.assertIsNone(optionen.com_port)
         self.assertTrue(optionen.ble_scan)
+        self.assertIsNone(optionen.server_url)
 
     def test_konfiguration_com_port_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,6 +55,7 @@ class TestKonfiguration(unittest.TestCase):
                         "baudrate": 9600,
                         "timeout": 3,
                         "ausgabe_datei": "out.jsonl",
+                        "server_url": "https://mesh.do1ffe.de",
                     }
                 ),
                 encoding="utf-8",
@@ -65,6 +67,7 @@ class TestKonfiguration(unittest.TestCase):
         self.assertEqual(optionen.baudrate, 9600)
         self.assertEqual(optionen.timeout, 3.0)
         self.assertEqual(str(optionen.ausgabe_pfad), "out.jsonl")
+        self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
 
     def test_cli_ueberschreibt_konfiguration(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +92,17 @@ class TestKonfiguration(unittest.TestCase):
         self.assertEqual(optionen.com_port, "COM9")
         self.assertFalse(optionen.ble_scan)
 
+
+
+    def test_cli_server_url_ueberschreibt_konfiguration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pfad = Path(tmp) / "config.json"
+            pfad.write_text(json.dumps({"server_url": "https://alt.example"}), encoding="utf-8")
+            optionen = self.modul.argumente_einlesen([
+                "--config", str(pfad), "--server-url", "https://mesh.do1ffe.de"
+            ])
+
+        self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
 
 class TestAdvertSerialisierung(unittest.TestCase):
     @classmethod
@@ -158,6 +172,11 @@ class TestAdvertSerialisierung(unittest.TestCase):
 
 
 
+
+    def test_ist_path_erkennt_path_typ(self):
+        self.assertTrue(self.modul.ist_path({"payload_typename": "PATH"}))
+        self.assertFalse(self.modul.ist_path({"payload_typename": "ADVERT"}))
+
 class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
@@ -171,6 +190,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             timeout=5.0,
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
+            server_url=None,
         )
         geraet = SimpleNamespace(address="AA:BB:CC:DD:EE:FF")
         erwarteter_client = object()
@@ -193,6 +213,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             timeout=7.0,
             ausgabe_pfad=Path("out.jsonl"),
             pin=None,
+            server_url=None,
         )
         geraet = SimpleNamespace(address="11:22:33:44:55:66")
         erwarteter_client = object()
@@ -224,6 +245,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             timeout=4.0,
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
+            server_url=None,
             ble_retry_einmal=True,
         )
         geraet = SimpleNamespace(address="AA:00:BB:11:CC:22")
@@ -247,6 +269,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             timeout=6.0,
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
+            server_url=None,
             ble_retry_einmal=True,
         )
         geraet = SimpleNamespace(address="FF:EE:DD:CC:BB:AA")

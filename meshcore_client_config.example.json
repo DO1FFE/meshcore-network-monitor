@@ -4,5 +4,6 @@
   "baudrate": 115200,
   "timeout": 10.0,
   "ausgabe_datei": "data/repeater_adverts.jsonl",
-  "pin": null
+  "pin": null,
+  "server_url": "https://mesh.do1ffe.de"
 }
