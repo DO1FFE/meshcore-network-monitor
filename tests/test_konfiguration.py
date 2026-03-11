@@ -177,6 +177,27 @@ class TestAdvertSerialisierung(unittest.TestCase):
         self.assertTrue(self.modul.ist_path({"payload_typename": "PATH"}))
         self.assertFalse(self.modul.ist_path({"payload_typename": "ADVERT"}))
 
+    def test_soll_an_server_gesendet_werden_fuer_advert_immer_wahr(self):
+        self.assertTrue(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "ADVERT", "path": []}
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_fuer_nicht_path_typ_mit_path_wahr(self):
+        self.assertTrue(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "TEXT", "path": ["hop-1"]}
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_ohne_advert_und_ohne_path_falsch(self):
+        self.assertFalse(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "TEXT", "path": []}
+            )
+        )
+
 class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):

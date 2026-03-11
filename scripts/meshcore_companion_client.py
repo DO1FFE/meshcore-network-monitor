@@ -411,6 +411,11 @@ def ist_path(log_daten: dict[str, Any]) -> bool:
     return log_daten.get("payload_typename") == "PATH"
 
 
+def soll_an_server_gesendet_werden(log_daten: dict[str, Any]) -> bool:
+    """Prüft, ob ein RX-Log-Eintrag gemäß Server-Regel übertragen werden soll."""
+    return ist_advert(log_daten) or bool(log_daten.get("path"))
+
+
 def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
     ziel = server_url.rstrip("/") + "/api/events"
@@ -449,7 +454,7 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | N
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
 
-        if server_url and (ist_advert(log_daten) or ist_path(log_daten)):
+        if server_url and soll_an_server_gesendet_werden(log_daten):
             _uebertragung_task_registrieren(log_daten)
 
         paket = {
