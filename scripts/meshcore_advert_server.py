@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import math
+import os
 import re
 import sqlite3
+import tempfile
 import threading
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -99,6 +102,78 @@ def prefix_aus_pfadsegment(segment: str | None) -> str | None:
     return bereinigt[:2].lower()
 
 
+def _normalisiere_prefix(prefix: str | None) -> str | None:
+    if not prefix:
+        return None
+    normalisiert = prefix.strip().lower()
+    if len(normalisiert) != 2:
+        return None
+    if not all(zeichen in "0123456789abcdef" for zeichen in normalisiert):
+        return None
+    return normalisiert
+
+
+def _schreibe_prefixdatei_atomar(dateipfad: Path, prefixe: list[str]) -> None:
+    dateipfad.parent.mkdir(parents=True, exist_ok=True)
+    inhalt = "\n".join(prefixe) + "\n"
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dateipfad.parent, delete=False) as temp_datei:
+        temp_datei.write(inhalt)
+        temp_name = temp_datei.name
+    os.replace(temp_name, dateipfad)
+
+
+def _lock_pfad_fuer(dateipfad: Path) -> Path:
+    return dateipfad.with_suffix(dateipfad.suffix + ".lock")
+
+
+def initialisiere_unbenutzte_prefixe(dateipfad: Path) -> None:
+    dateipfad.parent.mkdir(parents=True, exist_ok=True)
+    lock_pfad = _lock_pfad_fuer(dateipfad)
+    with lock_pfad.open("a+", encoding="utf-8") as lock_datei:
+        fcntl.flock(lock_datei.fileno(), fcntl.LOCK_EX)
+        if dateipfad.exists():
+            return
+        alle_prefixe = [f"{wert:02x}" for wert in range(256)]
+        _schreibe_prefixdatei_atomar(dateipfad, alle_prefixe)
+
+
+def _prefixe_aus_inhalt(inhalt: str) -> list[str]:
+    prefixe: list[str] = []
+    gesehen: set[str] = set()
+    for zeile in inhalt.splitlines():
+        normalisiert = _normalisiere_prefix(zeile)
+        if not normalisiert or normalisiert in gesehen:
+            continue
+        gesehen.add(normalisiert)
+        prefixe.append(normalisiert)
+    return prefixe
+
+
+def lese_unbenutzte_prefixe(dateipfad: Path) -> list[str]:
+    initialisiere_unbenutzte_prefixe(dateipfad)
+    lock_pfad = _lock_pfad_fuer(dateipfad)
+    with lock_pfad.open("a+", encoding="utf-8") as lock_datei:
+        fcntl.flock(lock_datei.fileno(), fcntl.LOCK_EX)
+        inhalt = dateipfad.read_text(encoding="utf-8")
+        return _prefixe_aus_inhalt(inhalt)
+
+
+def markiere_prefix_als_benutzt(dateipfad: Path, prefix: str) -> None:
+    normalisiert = _normalisiere_prefix(prefix)
+    if not normalisiert:
+        return
+    initialisiere_unbenutzte_prefixe(dateipfad)
+    lock_pfad = _lock_pfad_fuer(dateipfad)
+    with lock_pfad.open("a+", encoding="utf-8") as lock_datei:
+        fcntl.flock(lock_datei.fileno(), fcntl.LOCK_EX)
+        inhalt = dateipfad.read_text(encoding="utf-8")
+        vorhandene_prefixe = _prefixe_aus_inhalt(inhalt)
+        neue_prefixe = [eintrag for eintrag in vorhandene_prefixe if eintrag != normalisiert]
+        if len(neue_prefixe) == len(vorhandene_prefixe):
+            return
+        _schreibe_prefixdatei_atomar(dateipfad, neue_prefixe)
+
+
 def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Berechnet die Großkreisdistanz zweier Koordinaten in Kilometern."""
     radius_erde_km = 6371.0
@@ -111,7 +186,9 @@ def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 class Datenbank:
-    def __init__(self, pfad: Path):
+    def __init__(self, pfad: Path, unbenutzte_prefix_datei: Path):
+        self.unbenutzte_prefix_datei = unbenutzte_prefix_datei
+        initialisiere_unbenutzte_prefixe(self.unbenutzte_prefix_datei)
         self.verbindung = sqlite3.connect(pfad, check_same_thread=False)
         self.verbindung.row_factory = sqlite3.Row
         self._sperre = threading.Lock()
@@ -304,6 +381,7 @@ class Datenbank:
             if typ == "ADVERT":
                 repeater_id = None
                 if prefix:
+                    prefix = prefix.lower()[:2]
                     repeater_id = self._repeater_fuer_advert(
                         prefix=prefix,
                         latitude=latitude,
@@ -312,6 +390,7 @@ class Datenbank:
                         public_key=public_key,
                         zeit=zeit,
                     )
+                    markiere_prefix_als_benutzt(self.unbenutzte_prefix_datei, prefix)
                 self.verbindung.execute(
                     """
                     INSERT INTO adverts (received_at, repeater_id, prefix, name, public_key, latitude, longitude, path, payload_json)
@@ -465,6 +544,7 @@ class Datenbank:
 
 class Handler(BaseHTTPRequestHandler):
     datenbank: Datenbank
+    unbenutzte_prefix_datei: Path
 
     def _json_antwort(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         roh = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -487,6 +567,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if pfad == "/api/map-data":
             self._json_antwort(HTTPStatus.OK, self.datenbank.map_daten())
+            return
+
+        if pfad == "/api/unused-prefixes":
+            self._json_antwort(HTTPStatus.OK, {"prefixes": lese_unbenutzte_prefixe(self.unbenutzte_prefix_datei)})
             return
 
         self._json_antwort(HTTPStatus.NOT_FOUND, {"fehler": "nicht gefunden"})
@@ -523,15 +607,18 @@ def parse_argumente() -> argparse.Namespace:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8023)
     parser.add_argument("--db", type=Path, default=Path("data/meshcore_map.db"))
+    parser.add_argument("--unused-prefix-file", type=Path, default=Path("data/unbenutzte_prefixe.txt"))
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_argumente()
     args.db.parent.mkdir(parents=True, exist_ok=True)
+    args.unused_prefix_file.parent.mkdir(parents=True, exist_ok=True)
 
     handler = Handler
-    handler.datenbank = Datenbank(args.db)
+    handler.unbenutzte_prefix_datei = args.unused_prefix_file
+    handler.datenbank = Datenbank(args.db, args.unused_prefix_file)
     server = ThreadingHTTPServer((args.host, args.port), handler)
     print(f"[INFO] Server läuft auf http://{args.host}:{args.port}")
     try:
