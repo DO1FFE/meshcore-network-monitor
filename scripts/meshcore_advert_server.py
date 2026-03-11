@@ -78,15 +78,25 @@ def prefix_aus_public_key(public_key: str | None) -> str | None:
     if not public_key:
         return None
     bereinigt = "".join(ch for ch in public_key if ch.isalnum())
-    if len(bereinigt) < 4:
+    if len(bereinigt) < 2:
         return None
-    return bereinigt[:4].lower()
+    return bereinigt[:2].lower()
 
 
 def pfadsegmente(path_text: str | None) -> list[str]:
     if not path_text:
         return []
+    # PATH-Segmente bleiben 4-stellig (2 Byte) wie im Protokoll.
     return [eintrag.lower() for eintrag in re.findall(r"[0-9a-fA-F]{4}", path_text)]
+
+
+def prefix_aus_pfadsegment(segment: str | None) -> str | None:
+    if not segment:
+        return None
+    bereinigt = "".join(ch for ch in segment if ch.isalnum())
+    if len(bereinigt) < 2:
+        return None
+    return bereinigt[:2].lower()
 
 
 def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -414,7 +424,10 @@ class Datenbank:
                 if start_id is not None:
                     ids.append(start_id)
                 for segment in segmente:
-                    kandidat = waehle_kandidat(segment, vorherige_id)
+                    segment_prefix = prefix_aus_pfadsegment(segment)
+                    if not segment_prefix:
+                        continue
+                    kandidat = waehle_kandidat(segment_prefix, vorherige_id)
                     if kandidat is None:
                         continue
                     ids.append(kandidat)
