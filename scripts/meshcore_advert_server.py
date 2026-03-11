@@ -272,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
 def parse_argumente() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ADVERT/PATH Server mit Live-Karte")
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--port", type=int, default=8023)
     parser.add_argument("--db", type=Path, default=Path("data/meshcore_map.db"))
     return parser.parse_args()
 
