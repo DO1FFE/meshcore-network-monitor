@@ -45,6 +45,15 @@ class TestAdvertServer(unittest.TestCase):
             )
             db.speichere_event(
                 {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R2",
+                    "adv_key": "c3d4aa00",
+                    "adv_lat": 51.1,
+                    "adv_lon": 10.1,
+                }
+            )
+            db.speichere_event(
+                {
                     "payload_typename": "PATH",
                     "public_key": "a1b2ff00",
                     "path": "a1b2 c3d4 eeff",
@@ -53,10 +62,40 @@ class TestAdvertServer(unittest.TestCase):
 
             daten = db.map_daten()
 
-        self.assertEqual(len(daten["nodes"]), 1)
-        self.assertEqual(daten["nodes"][0]["prefix"], "a1b2")
-        kanten = {(k["von"], k["nach"]) for k in daten["edges"]}
-        self.assertIn(("a1b2", "c3d4"), kanten)
+        self.assertEqual(len(daten["nodes"]), 2)
+        self.assertTrue(all("id" in knoten for knoten in daten["nodes"]))
+        self.assertEqual({k["prefix"] for k in daten["nodes"]}, {"a1b2", "c3d4"})
+        kanten = {(k["von_id"], k["nach_id"]) for k in daten["edges"]}
+        self.assertTrue(any(von != nach for von, nach in kanten))
+
+    def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-Nord",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 53.5511,
+                    "adv_lon": 9.9937,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-Sued",
+                    "adv_key": "a1b2aa11",
+                    "adv_lat": 48.1351,
+                    "adv_lon": 11.582,
+                }
+            )
+
+            daten = db.map_daten()
+
+            knoten_mit_prefix = [n for n in daten["nodes"] if "a1b2" in (n.get("prefixes") or [])]
+            self.assertEqual(len(knoten_mit_prefix), 2)
+            ids = {n["id"] for n in knoten_mit_prefix}
+            self.assertEqual(len(ids), 2)
 
     def test_map_daten_json_serialisierbar(self):
         with tempfile.TemporaryDirectory() as tmp:

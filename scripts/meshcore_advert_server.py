@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -47,15 +48,16 @@ HTML_KARTE = """<!doctype html>
       const punkte = new Map();
       for (const n of daten.nodes) {
         if (typeof n.latitude !== 'number' || typeof n.longitude !== 'number') continue;
-        punkte.set(n.prefix, [n.latitude, n.longitude]);
-        const popup = `<b>${n.name || 'Unbenannt'}</b><br>Prefix: ${n.prefix}<br>Key: ${n.public_key || '-'}<br>Letztes ADVERT: ${n.last_seen || '-'}`;
+        punkte.set(n.id, [n.latitude, n.longitude]);
+        const prefixAnzeige = Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes.join(', ') : (n.prefix || '-');
+        const popup = `<b>${n.name || 'Unbenannt'}</b><br>ID: ${n.id}<br>Prefix(e): ${prefixAnzeige}<br>Key: ${n.public_key || '-'}<br>Letztes ADVERT: ${n.last_seen || '-'}`;
         L.marker([n.latitude, n.longitude]).bindPopup(popup).addTo(markerEbene);
       }
 
       for (const e of daten.edges) {
-        if (!punkte.has(e.von) || !punkte.has(e.nach)) continue;
-        L.polyline([punkte.get(e.von), punkte.get(e.nach)], { color: '#2457ff', weight: 3, opacity: 0.7 })
-          .bindPopup(`Verbindung: ${e.von} → ${e.nach}`)
+        if (!punkte.has(e.von_id) || !punkte.has(e.nach_id)) continue;
+        L.polyline([punkte.get(e.von_id), punkte.get(e.nach_id)], { color: '#2457ff', weight: 3, opacity: 0.7 })
+          .bindPopup(`Verbindung: ${e.von_id} → ${e.nach_id}`)
           .addTo(linienEbene);
       }
     }
@@ -87,6 +89,17 @@ def pfadsegmente(path_text: str | None) -> list[str]:
     return [eintrag.lower() for eintrag in re.findall(r"[0-9a-fA-F]{4}", path_text)]
 
 
+def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Berechnet die Großkreisdistanz zweier Koordinaten in Kilometern."""
+    radius_erde_km = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    return 2 * radius_erde_km * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 class Datenbank:
     def __init__(self, pfad: Path):
         self.verbindung = sqlite3.connect(pfad, check_same_thread=False)
@@ -99,7 +112,7 @@ class Datenbank:
             self.verbindung.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS repeaters (
-                    prefix TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY,
                     name TEXT,
                     public_key TEXT,
                     latitude REAL,
@@ -107,16 +120,26 @@ class Datenbank:
                     last_seen TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS repeater_aliases (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repeater_id INTEGER NOT NULL,
+                    prefix TEXT NOT NULL,
+                    UNIQUE(repeater_id, prefix),
+                    FOREIGN KEY(repeater_id) REFERENCES repeaters(id) ON DELETE CASCADE
+                );
+
                 CREATE TABLE IF NOT EXISTS adverts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     received_at TEXT NOT NULL,
+                    repeater_id INTEGER,
                     prefix TEXT,
                     name TEXT,
                     public_key TEXT,
                     latitude REAL,
                     longitude REAL,
                     path TEXT,
-                    payload_json TEXT NOT NULL
+                    payload_json TEXT NOT NULL,
+                    FOREIGN KEY(repeater_id) REFERENCES repeaters(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS paths (
@@ -128,7 +151,131 @@ class Datenbank:
                 );
                 """
             )
+            self._migration_altbestand()
             self.verbindung.commit()
+
+    def _migration_altbestand(self) -> None:
+        spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(repeaters)")}
+        if "id" in spalten and "prefix" not in spalten:
+            return
+
+        self.verbindung.executescript(
+            """
+            ALTER TABLE repeaters RENAME TO repeaters_alt;
+            CREATE TABLE repeaters (
+                id INTEGER PRIMARY KEY,
+                name TEXT,
+                public_key TEXT,
+                latitude REAL,
+                longitude REAL,
+                last_seen TEXT
+            );
+            """
+        )
+        for zeile in self.verbindung.execute(
+            "SELECT prefix, name, public_key, latitude, longitude, last_seen FROM repeaters_alt"
+        ):
+            cursor = self.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    zeile["name"],
+                    zeile["public_key"],
+                    zeile["latitude"],
+                    zeile["longitude"],
+                    zeile["last_seen"],
+                ),
+            )
+            if zeile["prefix"]:
+                self.verbindung.execute(
+                    "INSERT OR IGNORE INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+                    (cursor.lastrowid, zeile["prefix"]),
+                )
+        self.verbindung.execute("DROP TABLE repeaters_alt")
+
+        advert_spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(adverts)")}
+        if "repeater_id" not in advert_spalten:
+            self.verbindung.execute("ALTER TABLE adverts ADD COLUMN repeater_id INTEGER")
+
+    @staticmethod
+    def _koordinate(payload: dict[str, Any], feld_adv: str, feld_std: str) -> float | None:
+        rohwert = payload.get(feld_adv)
+        if rohwert is None:
+            rohwert = payload.get(feld_std)
+        if rohwert is None:
+            return None
+        try:
+            return float(rohwert)
+        except (TypeError, ValueError):
+            return None
+
+    def _repeater_fuer_advert(
+        self,
+        *,
+        prefix: str,
+        latitude: float | None,
+        longitude: float | None,
+        name: str | None,
+        public_key: str | None,
+        zeit: str,
+    ) -> int:
+        kandidaten = list(
+            self.verbindung.execute(
+                """
+                SELECT r.id, r.latitude, r.longitude
+                FROM repeaters r
+                JOIN repeater_aliases a ON a.repeater_id = r.id
+                WHERE a.prefix = ?
+                """,
+                (prefix,),
+            )
+        )
+
+        repeater_id: int | None = None
+        if latitude is not None and longitude is not None:
+            distanz_kandidaten: list[tuple[float, int]] = []
+            for kandidat in kandidaten:
+                if kandidat["latitude"] is None or kandidat["longitude"] is None:
+                    continue
+                distanz = distanz_km(latitude, longitude, kandidat["latitude"], kandidat["longitude"])
+                if distanz <= 20.0:
+                    distanz_kandidaten.append((distanz, kandidat["id"]))
+            if distanz_kandidaten:
+                distanz_kandidaten.sort(key=lambda eintrag: eintrag[0])
+                repeater_id = distanz_kandidaten[0][1]
+        elif kandidaten:
+            repeater_id = kandidaten[0]["id"]
+
+        if repeater_id is None:
+            cursor = self.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (name, public_key, latitude, longitude, zeit),
+            )
+            repeater_id = cursor.lastrowid
+        else:
+            self.verbindung.execute(
+                """
+                UPDATE repeaters
+                SET name = COALESCE(?, name),
+                    public_key = COALESCE(?, public_key),
+                    latitude = COALESCE(?, latitude),
+                    longitude = COALESCE(?, longitude),
+                    last_seen = ?
+                WHERE id = ?
+                """,
+                (name, public_key, latitude, longitude, zeit, repeater_id),
+            )
+
+        self.verbindung.execute(
+            "INSERT OR IGNORE INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+            (repeater_id, prefix),
+        )
+        return repeater_id
 
     def speichere_event(self, payload: dict[str, Any]) -> None:
         typ = payload.get("payload_typename")
@@ -139,46 +286,39 @@ class Datenbank:
         public_key = payload.get("adv_key") or payload.get("public_key")
         prefix = prefix_aus_public_key(public_key)
         path_text = payload.get("path")
+        name = payload.get("adv_name") or payload.get("name")
+        latitude = self._koordinate(payload, "adv_lat", "latitude")
+        longitude = self._koordinate(payload, "adv_lon", "longitude")
 
         with self._sperre:
             if typ == "ADVERT":
+                repeater_id = None
+                if prefix:
+                    repeater_id = self._repeater_fuer_advert(
+                        prefix=prefix,
+                        latitude=latitude,
+                        longitude=longitude,
+                        name=name,
+                        public_key=public_key,
+                        zeit=zeit,
+                    )
                 self.verbindung.execute(
                     """
-                    INSERT INTO adverts (received_at, prefix, name, public_key, latitude, longitude, path, payload_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO adverts (received_at, repeater_id, prefix, name, public_key, latitude, longitude, path, payload_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         zeit,
+                        repeater_id,
                         prefix,
-                        payload.get("adv_name") or payload.get("name"),
+                        name,
                         public_key,
-                        payload.get("adv_lat") or payload.get("latitude"),
-                        payload.get("adv_lon") or payload.get("longitude"),
+                        latitude,
+                        longitude,
                         path_text,
                         json.dumps(payload, ensure_ascii=False),
                     ),
                 )
-                if prefix:
-                    self.verbindung.execute(
-                        """
-                        INSERT INTO repeaters (prefix, name, public_key, latitude, longitude, last_seen)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ON CONFLICT(prefix) DO UPDATE SET
-                            name=excluded.name,
-                            public_key=excluded.public_key,
-                            latitude=COALESCE(excluded.latitude, repeaters.latitude),
-                            longitude=COALESCE(excluded.longitude, repeaters.longitude),
-                            last_seen=excluded.last_seen
-                        """,
-                        (
-                            prefix,
-                            payload.get("adv_name") or payload.get("name"),
-                            public_key,
-                            payload.get("adv_lat") or payload.get("latitude"),
-                            payload.get("adv_lon") or payload.get("longitude"),
-                            zeit,
-                        ),
-                    )
             else:
                 self.verbindung.execute(
                     """
@@ -191,27 +331,75 @@ class Datenbank:
 
     def map_daten(self) -> dict[str, Any]:
         with self._sperre:
-            nodes = [dict(zeile) for zeile in self.verbindung.execute("SELECT * FROM repeaters")]
-            edges: set[tuple[str, str]] = set()
+            nodes = []
+            for zeile in self.verbindung.execute(
+                """
+                SELECT
+                    r.id,
+                    r.name,
+                    r.public_key,
+                    r.latitude,
+                    r.longitude,
+                    r.last_seen,
+                    GROUP_CONCAT(a.prefix) AS prefixes
+                FROM repeaters r
+                LEFT JOIN repeater_aliases a ON a.repeater_id = r.id
+                GROUP BY r.id
+                ORDER BY r.id
+                """
+            ):
+                prefixes = [prefix for prefix in (zeile["prefixes"] or "").split(",") if prefix]
+                nodes.append(
+                    {
+                        "id": zeile["id"],
+                        "prefix": prefixes[0] if prefixes else None,
+                        "prefixes": prefixes,
+                        "name": zeile["name"],
+                        "public_key": zeile["public_key"],
+                        "latitude": zeile["latitude"],
+                        "longitude": zeile["longitude"],
+                        "last_seen": zeile["last_seen"],
+                    }
+                )
+
+            alias_map: dict[str, list[int]] = {}
+            for zeile in self.verbindung.execute("SELECT repeater_id, prefix FROM repeater_aliases"):
+                alias_map.setdefault(zeile["prefix"], []).append(zeile["repeater_id"])
+
+            edges: set[tuple[int, int]] = set()
+
+            def kanten_hinzufuegen(von_ids: list[int], nach_ids: list[int]) -> None:
+                for von_id in von_ids:
+                    for nach_id in nach_ids:
+                        if von_id != nach_id:
+                            edges.add((von_id, nach_id))
 
             for zeile in self.verbindung.execute("SELECT source_prefix, path FROM paths"):
-                quelle = zeile["source_prefix"]
                 segmente = pfadsegmente(zeile["path"])
-                if quelle:
-                    segmente = [quelle] + segmente
+                if zeile["source_prefix"]:
+                    segmente = [zeile["source_prefix"]] + segmente
                 for a, b in zip(segmente, segmente[1:]):
-                    if a != b:
-                        edges.add((a, b))
+                    kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
 
-            for zeile in self.verbindung.execute("SELECT prefix, path FROM adverts WHERE path IS NOT NULL"):
+            for zeile in self.verbindung.execute(
+                "SELECT repeater_id, prefix, path FROM adverts WHERE path IS NOT NULL"
+            ):
                 segmente = pfadsegmente(zeile["path"])
-                if zeile["prefix"]:
+                if zeile["repeater_id"]:
+                    vorgaenger_ids = [zeile["repeater_id"]]
+                    if segmente:
+                        kanten_hinzufuegen(vorgaenger_ids, alias_map.get(segmente[0], []))
+                        for a, b in zip(segmente, segmente[1:]):
+                            kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
+                elif zeile["prefix"]:
                     segmente = [zeile["prefix"]] + segmente
-                for a, b in zip(segmente, segmente[1:]):
-                    if a != b:
-                        edges.add((a, b))
+                    for a, b in zip(segmente, segmente[1:]):
+                        kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
 
-        return {"nodes": nodes, "edges": [{"von": a, "nach": b} for a, b in sorted(edges)]}
+        return {
+            "nodes": nodes,
+            "edges": [{"von_id": a, "nach_id": b} for a, b in sorted(edges)],
+        }
 
 
 class Handler(BaseHTTPRequestHandler):
