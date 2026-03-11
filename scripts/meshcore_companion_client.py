@@ -95,9 +95,25 @@ async def meshcore_verbinden(optionen: CliOptionen) -> MeshCore:
             )
         else:
             geraet = await ble_geraet_interaktiv_auswaehlen(optionen.timeout)
-            print(f"[INFO] Verbinde per BLE mit {geraet.address} …")
+            zieladresse = getattr(geraet, "address", None) or str(geraet)
+            print(f"[INFO] Verbinde per BLE mit Zieladresse {zieladresse} …")
+
+            async def _ble_verbindungsaufbau() -> MeshCore:
+                try:
+                    return await MeshCore.create_ble(
+                        zieladresse,
+                        pin=optionen.pin,
+                        default_timeout=optionen.timeout,
+                    )
+                except TypeError:
+                    return await MeshCore.create_ble(
+                        address=zieladresse,
+                        pin=optionen.pin,
+                        default_timeout=optionen.timeout,
+                    )
+
             client = await asyncio.wait_for(
-                MeshCore.create_ble(device=geraet, pin=optionen.pin, default_timeout=optionen.timeout),
+                _ble_verbindungsaufbau(),
                 timeout=optionen.timeout + 5.0,
             )
     except TimeoutError as exc:

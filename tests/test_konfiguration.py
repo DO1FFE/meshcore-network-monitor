@@ -5,6 +5,8 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 class TestKonfiguration(unittest.TestCase):
@@ -84,6 +86,66 @@ class TestKonfiguration(unittest.TestCase):
 
         self.assertEqual(optionen.com_port, "COM9")
         self.assertFalse(optionen.ble_scan)
+
+
+class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_ble_verbindung_verwendet_adresse_als_positionsargument(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=5.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin="123456",
+        )
+        geraet = SimpleNamespace(address="AA:BB:CC:DD:EE:FF")
+        erwarteter_client = object()
+
+        with patch.object(self.modul, "ble_geraet_interaktiv_auswaehlen", AsyncMock(return_value=geraet)), patch.object(
+            self.modul.MeshCore, "create_ble", AsyncMock(return_value=erwarteter_client), create=True
+        ) as create_ble_mock:
+            client = await self.modul.meshcore_verbinden(optionen)
+
+        self.assertIs(client, erwarteter_client)
+        create_ble_mock.assert_awaited_once_with(
+            "AA:BB:CC:DD:EE:FF", pin="123456", default_timeout=5.0
+        )
+
+    async def test_ble_fallback_verwendet_address_parameter_bei_typeerror(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=7.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin=None,
+        )
+        geraet = SimpleNamespace(address="11:22:33:44:55:66")
+        erwarteter_client = object()
+
+        create_ble_mock = AsyncMock(side_effect=[TypeError("bad signature"), erwarteter_client])
+
+        with patch.object(self.modul, "ble_geraet_interaktiv_auswaehlen", AsyncMock(return_value=geraet)), patch.object(
+            self.modul.MeshCore, "create_ble", create_ble_mock, create=True
+        ):
+            client = await self.modul.meshcore_verbinden(optionen)
+
+        self.assertIs(client, erwarteter_client)
+        self.assertEqual(create_ble_mock.await_count, 2)
+        erster_aufruf = create_ble_mock.await_args_list[0]
+        zweiter_aufruf = create_ble_mock.await_args_list[1]
+
+        self.assertEqual(erster_aufruf.args, ("11:22:33:44:55:66",))
+        self.assertEqual(erster_aufruf.kwargs, {"pin": None, "default_timeout": 7.0})
+        self.assertEqual(zweiter_aufruf.args, ())
+        self.assertEqual(
+            zweiter_aufruf.kwargs,
+            {"address": "11:22:33:44:55:66", "pin": None, "default_timeout": 7.0},
+        )
 
 
 if __name__ == "__main__":
