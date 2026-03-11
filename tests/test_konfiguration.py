@@ -642,6 +642,33 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
         self.assertEqual(payload["path"], ["a1b2", "c3d4"])
 
 
+    def test_server_api_events_url_normalisiert_basis_und_endpoint(self):
+        self.assertEqual(
+            self.modul.server_api_events_url("https://mesh.do1ffe.de"),
+            "https://mesh.do1ffe.de/api/events",
+        )
+        self.assertEqual(
+            self.modul.server_api_events_url("https://mesh.do1ffe.de/api/events"),
+            "https://mesh.do1ffe.de/api/events",
+        )
+
+    def test_server_api_events_url_lehnt_unvollstaendige_url_ab(self):
+        with self.assertRaises(self.modul.Verbindungsfehler):
+            self.modul.server_api_events_url("mesh.do1ffe.de")
+
+    def test_event_an_server_senden_haengt_api_events_nicht_doppelt_an(self):
+        log_daten = {"payload_typename": "ADVERT", "adv_key": "a1b2c3d4"}
+
+        with patch.object(self.modul.request, "Request") as request_mock, patch.object(
+            self.modul.request,
+            "urlopen",
+        ) as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
+            self.modul.event_an_server_senden("https://server.example/api/events", log_daten)
+
+        args, _ = request_mock.call_args
+        self.assertEqual(args[0], "https://server.example/api/events")
+
 
 if __name__ == "__main__":
     unittest.main()
