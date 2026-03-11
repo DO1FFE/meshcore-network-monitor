@@ -208,7 +208,21 @@ class TestAdvertSerialisierung(unittest.TestCase):
     def test_soll_an_server_gesendet_werden_ohne_advert_und_ohne_path_falsch(self):
         self.assertFalse(
             self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "TEXT", "ohne_path": True}
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_bei_leerem_path_ist_wahr(self):
+        self.assertTrue(
+            self.modul.soll_an_server_gesendet_werden(
                 {"payload_typename": "TEXT", "path": []}
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_erkennt_grosses_path_feld(self):
+        self.assertTrue(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "TEXT", "PATH": "a1b2 c3d4"}
             )
         )
 
@@ -611,6 +625,21 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
         _, kwargs = request_mock.call_args
         payload = json.loads(kwargs["data"].decode("utf-8"))
         self.assertEqual(payload["payload_typename"], "PATH")
+
+
+    def test_event_an_server_senden_uebernimmt_path_aus_grossgeschriebenem_feld(self):
+        log_daten = {"payload_typename": "TEXT", "PATH": ["a1b2", "c3d4"]}
+
+        with patch.object(self.modul.request, "Request") as request_mock, patch.object(
+            self.modul.request,
+            "urlopen",
+        ) as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
+            self.modul.event_an_server_senden("https://server.example", log_daten)
+
+        _, kwargs = request_mock.call_args
+        payload = json.loads(kwargs["data"].decode("utf-8"))
+        self.assertEqual(payload["path"], ["a1b2", "c3d4"])
 
 
 

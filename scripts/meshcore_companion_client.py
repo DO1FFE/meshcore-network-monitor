@@ -440,9 +440,17 @@ def ist_path(log_daten: dict[str, Any]) -> bool:
     return ermittle_payload_typename(log_daten) == "PATH"
 
 
+def extrahiere_path(log_daten: dict[str, Any]) -> Any:
+    """Liest PATH-Daten robust aus unterschiedlichen Feldnamen aus."""
+    for schluessel in ("path", "PATH"):
+        if schluessel in log_daten:
+            return log_daten.get(schluessel)
+    return None
+
+
 def soll_an_server_gesendet_werden(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag gemäß Server-Regel übertragen werden soll."""
-    return ist_advert(log_daten) or ist_path(log_daten) or bool(log_daten.get("path"))
+    return ist_advert(log_daten) or ist_path(log_daten) or extrahiere_path(log_daten) is not None
 
 
 def _wert_gekuerzt_formatieren(wert: Any, max_laenge: int) -> str:
@@ -482,6 +490,11 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     server_payload = dict(log_daten)
     if payload_typename and "payload_typename" not in server_payload:
         server_payload["payload_typename"] = payload_typename
+
+    path_daten = extrahiere_path(log_daten)
+    if path_daten is not None:
+        server_payload["path"] = path_daten
+
     roh = json.dumps(json_sicherer_wert(server_payload), ensure_ascii=False).encode("utf-8")
     req = request.Request(ziel, data=roh, headers={"Content-Type": "application/json"}, method="POST")
     with request.urlopen(req, timeout=5.0) as antwort:
