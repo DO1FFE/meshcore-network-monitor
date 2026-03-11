@@ -97,6 +97,102 @@ class TestAdvertServer(unittest.TestCase):
             ids = {n["id"] for n in knoten_mit_prefix}
             self.assertEqual(len(ids), 2)
 
+
+    def test_map_daten_waehlt_bei_mehreren_prefix_kandidaten_den_naechsten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Quelle",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "a1b2",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A1B2-Nah",
+                    "adv_key": "a1b2bbbb",
+                    "adv_lat": 50.05,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A1B2-Fern",
+                    "adv_key": "a1b2cccc",
+                    "adv_lat": 50.9,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            daten = db.map_daten()
+
+        id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
+        kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
+        self.assertIn((id_nach_name["Quelle"], id_nach_name["A1B2-Nah"]), kanten)
+        self.assertNotIn((id_nach_name["Quelle"], id_nach_name["A1B2-Fern"]), kanten)
+
+    def test_map_daten_kante_unter_20_km_wird_uebernommen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Start",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "2222",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Ziel-Nah",
+                    "adv_key": "2222bbbb",
+                    "adv_lat": 50.09,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            daten = db.map_daten()
+
+        id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
+        kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
+        self.assertIn((id_nach_name["Start"], id_nach_name["Ziel-Nah"]), kanten)
+
+    def test_map_daten_kante_ueber_20_km_wird_verworfen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Start",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "2222",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Ziel-Fern",
+                    "adv_key": "2222bbbb",
+                    "adv_lat": 50.4,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            daten = db.map_daten()
+
+        self.assertEqual(daten["edges"], [])
+
     def test_map_daten_json_serialisierbar(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db")
