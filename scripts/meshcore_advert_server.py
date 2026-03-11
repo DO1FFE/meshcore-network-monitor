@@ -366,35 +366,83 @@ class Datenbank:
             for zeile in self.verbindung.execute("SELECT repeater_id, prefix FROM repeater_aliases"):
                 alias_map.setdefault(zeile["prefix"], []).append(zeile["repeater_id"])
 
+            repeater_positionen: dict[int, tuple[float, float]] = {}
+            for knoten in nodes:
+                latitude = knoten.get("latitude")
+                longitude = knoten.get("longitude")
+                if latitude is None or longitude is None:
+                    continue
+                repeater_positionen[knoten["id"]] = (float(latitude), float(longitude))
+
             edges: set[tuple[int, int]] = set()
 
-            def kanten_hinzufuegen(von_ids: list[int], nach_ids: list[int]) -> None:
-                for von_id in von_ids:
-                    for nach_id in nach_ids:
-                        if von_id != nach_id:
-                            edges.add((von_id, nach_id))
+            def waehle_kandidat(prefix: str, vorherige_id: int | None) -> int | None:
+                kandidaten = alias_map.get(prefix, [])
+                if not kandidaten:
+                    return None
+
+                kandidaten_mit_koordinaten = [kid for kid in kandidaten if kid in repeater_positionen]
+                if not kandidaten_mit_koordinaten:
+                    return None
+
+                if vorherige_id in repeater_positionen:
+                    lat_vorher, lon_vorher = repeater_positionen[vorherige_id]
+                    return min(
+                        kandidaten_mit_koordinaten,
+                        key=lambda kid: distanz_km(
+                            lat_vorher,
+                            lon_vorher,
+                            repeater_positionen[kid][0],
+                            repeater_positionen[kid][1],
+                        ),
+                    )
+                return min(kandidaten_mit_koordinaten)
+
+            def kante_hinzufuegen(von_id: int | None, nach_id: int | None) -> None:
+                if von_id is None or nach_id is None or von_id == nach_id:
+                    return
+                if von_id not in repeater_positionen or nach_id not in repeater_positionen:
+                    return
+                lat_von, lon_von = repeater_positionen[von_id]
+                lat_nach, lon_nach = repeater_positionen[nach_id]
+                if distanz_km(lat_von, lon_von, lat_nach, lon_nach) <= 20.0:
+                    edges.add((von_id, nach_id))
+
+            def aufgeloeste_ids(segmente: list[str], start_id: int | None = None) -> list[int]:
+                ids: list[int] = []
+                vorherige_id = start_id
+                if start_id is not None:
+                    ids.append(start_id)
+                for segment in segmente:
+                    kandidat = waehle_kandidat(segment, vorherige_id)
+                    if kandidat is None:
+                        continue
+                    ids.append(kandidat)
+                    vorherige_id = kandidat
+                return ids
 
             for zeile in self.verbindung.execute("SELECT source_prefix, path FROM paths"):
                 segmente = pfadsegmente(zeile["path"])
+                start_id = None
                 if zeile["source_prefix"]:
-                    segmente = [zeile["source_prefix"]] + segmente
-                for a, b in zip(segmente, segmente[1:]):
-                    kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
+                    start_id = waehle_kandidat(zeile["source_prefix"], None)
+                ids = aufgeloeste_ids(segmente, start_id)
+                for a, b in zip(ids, ids[1:]):
+                    kante_hinzufuegen(a, b)
 
             for zeile in self.verbindung.execute(
                 "SELECT repeater_id, prefix, path FROM adverts WHERE path IS NOT NULL"
             ):
                 segmente = pfadsegmente(zeile["path"])
                 if zeile["repeater_id"]:
-                    vorgaenger_ids = [zeile["repeater_id"]]
-                    if segmente:
-                        kanten_hinzufuegen(vorgaenger_ids, alias_map.get(segmente[0], []))
-                        for a, b in zip(segmente, segmente[1:]):
-                            kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
+                    ids = aufgeloeste_ids(segmente, zeile["repeater_id"])
+                    for a, b in zip(ids, ids[1:]):
+                        kante_hinzufuegen(a, b)
                 elif zeile["prefix"]:
-                    segmente = [zeile["prefix"]] + segmente
-                    for a, b in zip(segmente, segmente[1:]):
-                        kanten_hinzufuegen(alias_map.get(a, []), alias_map.get(b, []))
+                    start_id = waehle_kandidat(zeile["prefix"], None)
+                    ids = aufgeloeste_ids(segmente, start_id)
+                    for a, b in zip(ids, ids[1:]):
+                        kante_hinzufuegen(a, b)
 
         return {
             "nodes": nodes,
