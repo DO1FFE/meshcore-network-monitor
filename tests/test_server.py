@@ -25,15 +25,62 @@ class TestAdvertServer(unittest.TestCase):
         segmente = self.modul.pfadsegmente("a1b2->c3d4 / eeff")
         self.assertEqual(segmente, ["a1b2", "c3d4", "eeff"])
 
+    def test_parse_argumente_unbenutzte_prefix_datei_konfigurierbar(self):
+        import sys
+        alte_argv = sys.argv
+        try:
+            sys.argv = ["prog", "--unused-prefix-file", "foo/bar.txt"]
+            optionen = self.modul.parse_argumente()
+        finally:
+            sys.argv = alte_argv
+
+        self.assertEqual(optionen.unused_prefix_file, Path("foo/bar.txt"))
+
+    def test_initialisierung_unbenutzter_prefixe_erzeugt_256_eintraege(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            self.modul.initialisiere_unbenutzte_prefixe(datei)
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertEqual(len(prefixe), 256)
+        self.assertEqual(prefixe[0], "00")
+        self.assertEqual(prefixe[-1], "ff")
+
+    def test_markiere_prefix_als_benutzt_entfernt_eintrag_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            self.modul.initialisiere_unbenutzte_prefixe(datei)
+            self.modul.markiere_prefix_als_benutzt(datei, "A1")
+            self.modul.markiere_prefix_als_benutzt(datei, "a1")
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertNotIn("a1", prefixe)
+        self.assertEqual(len(prefixe), 255)
+
+    def test_speichere_event_entfernt_prefix_aus_unbenutzter_datei(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", datei)
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                }
+            )
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertNotIn("a1", prefixe)
+
     def test_datenbank_speichert_nur_advert_und_path(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             with self.assertRaises(ValueError):
                 db.speichere_event({"payload_typename": "MSG", "text": "x"})
 
     def test_map_daten_enthaelt_knoten_und_kanten(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -71,7 +118,7 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -101,7 +148,7 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_map_daten_waehlt_bei_mehreren_prefix_kandidaten_den_naechsten(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -140,7 +187,7 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_map_daten_kante_unter_20_km_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -169,7 +216,7 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_map_daten_kante_ueber_20_km_wird_verworfen(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -196,7 +243,7 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_map_daten_json_serialisierbar(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db")
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
