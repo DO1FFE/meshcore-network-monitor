@@ -16,8 +16,12 @@ from meshcore import EventType, MeshCore
 
 try:
     from bleak import BleakScanner
+    from bleak.exc import BleakDBusError, BleakDeviceNotFoundError, BleakError
 except ImportError:  # BLE ist optional und wird nur für --ble-scan benötigt.
     BleakScanner = None
+    BleakError = Exception
+    BleakDeviceNotFoundError = Exception
+    BleakDBusError = Exception
 
 REPEATER_TYP_NUMMER = 0x01
 AUSGABE_PFAD_STANDARD = Path("data/repeater_adverts.jsonl")
@@ -35,6 +39,7 @@ class CliOptionen:
     timeout: float
     ausgabe_pfad: Path
     pin: str | None
+    ble_retry_einmal: bool = True
 
 
 STANDARD_KONFIGURATION = {
@@ -44,6 +49,7 @@ STANDARD_KONFIGURATION = {
     "timeout": 10.0,
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
+    "ble_retry_einmal": True,
 }
 
 
@@ -98,6 +104,12 @@ async def meshcore_verbinden(optionen: CliOptionen) -> MeshCore:
             zieladresse = getattr(geraet, "address", None) or str(geraet)
             print(f"[INFO] Verbinde per BLE mit Zieladresse {zieladresse} …")
 
+            hinweis_ursachen = (
+                "Mögliche Ursachen: Gerät außer Reichweite, BLE-Adapter exklusiv belegt "
+                "oder inkompatibler Verbindungsparameter."
+            )
+            anzahl_versuche = 2 if optionen.ble_retry_einmal else 1
+
             async def _ble_verbindungsaufbau() -> MeshCore:
                 try:
                     return await MeshCore.create_ble(
@@ -112,10 +124,56 @@ async def meshcore_verbinden(optionen: CliOptionen) -> MeshCore:
                         default_timeout=optionen.timeout,
                     )
 
-            client = await asyncio.wait_for(
-                _ble_verbindungsaufbau(),
-                timeout=optionen.timeout + 5.0,
-            )
+            letzter_fehler: Verbindungsfehler | None = None
+            client = None
+
+            urspruenglicher_fehler: Exception | None = None
+            for versuch in range(1, anzahl_versuche + 1):
+                try:
+                    client = await asyncio.wait_for(
+                        _ble_verbindungsaufbau(),
+                        timeout=optionen.timeout + 5.0,
+                    )
+                    break
+                except TimeoutError as exc:
+                    urspruenglicher_fehler = exc
+                    letzter_fehler = Verbindungsfehler(
+                        "BLE-Verbindung in Timeout gelaufen "
+                        f"(Zieladresse={zieladresse}, Timeout={optionen.timeout:.1f}s). "
+                        f"{hinweis_ursachen}"
+                    )
+                except (BleakError, BleakDeviceNotFoundError, BleakDBusError) as exc:
+                    urspruenglicher_fehler = exc
+                    letzter_fehler = Verbindungsfehler(
+                        "BLE-spezifischer Verbindungsfehler "
+                        f"(Zieladresse={zieladresse}, Timeout={optionen.timeout:.1f}s): {exc}. "
+                        f"{hinweis_ursachen}"
+                    )
+                except Exception as exc:
+                    urspruenglicher_fehler = exc
+                    letzter_fehler = Verbindungsfehler(
+                        "Allgemeiner Fehler beim BLE-Verbindungsaufbau "
+                        f"(Zieladresse={zieladresse}, Timeout={optionen.timeout:.1f}s): {exc}. "
+                        f"{hinweis_ursachen}"
+                    )
+
+                if versuch < anzahl_versuche:
+                    print(
+                        "[WARNUNG] Erster BLE-Verbindungsversuch fehlgeschlagen "
+                        "– einmaliger Retry in Kürze …"
+                    )
+                    await asyncio.sleep(1.0)
+
+            if client is None and letzter_fehler is not None:
+                raise Verbindungsfehler(
+                    "BLE-Verbindung endgültig fehlgeschlagen, auch der einmalige "
+                    "Wiederholungsversuch war nicht erfolgreich. "
+                    f"{letzter_fehler}"
+                ) from urspruenglicher_fehler
+            if client is None:
+                raise Verbindungsfehler("BLE-Verbindung konnte nicht aufgebaut werden.")
+    except Verbindungsfehler:
+        raise
     except TimeoutError as exc:
         raise Verbindungsfehler("Verbindungsaufbau hat das Zeitlimit überschritten.") from exc
     except Exception as exc:
@@ -306,6 +364,7 @@ def optionen_aus_argumenten_und_konfiguration(
     timeout = args.timeout if args.timeout is not None else konfiguration.get("timeout", 10.0)
     ausgabe_datei = args.ausgabe_datei if args.ausgabe_datei is not None else konfiguration.get("ausgabe_datei")
     pin = args.pin if args.pin is not None else konfiguration.get("pin")
+    ble_retry_einmal = bool(konfiguration.get("ble_retry_einmal", True))
 
     return CliOptionen(
         com_port=com_port,
@@ -314,6 +373,7 @@ def optionen_aus_argumenten_und_konfiguration(
         timeout=float(timeout),
         ausgabe_pfad=Path(ausgabe_datei),
         pin=pin,
+        ble_retry_einmal=ble_retry_einmal,
     )
 
 

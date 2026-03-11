@@ -97,3 +97,13 @@ Das Skript behandelt robuste Fehlerszenarien mit klaren Fehlermeldungen:
 - Ungültige PIN (`LOGIN_FAILED`)
 - Nicht verfügbare BLE-Umgebung (fehlendes `bleak`)
 - Nicht erreichbare COM-Schnittstelle
+
+### BLE-spezifisches Verhalten
+
+Beim BLE-Verbindungsaufbau enthält die Fehlermeldung zusätzlich Kontext mit:
+
+- Zieladresse des ausgewählten Geräts
+- verwendetem Timeout
+- Hinweisen auf typische Ursachen (Reichweite, exklusiv belegter Adapter, inkompatible Parameter)
+
+Zusätzlich ist ein **einmaliger Retry** aktiv: Wenn der erste BLE-Connect fehlschlägt, wartet der Client kurz und versucht die Verbindung genau ein weiteres Mal. Schlagen beide Versuche fehl, bricht das Skript mit einer klaren Endfehlermeldung ab.

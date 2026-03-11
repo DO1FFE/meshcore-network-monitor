@@ -146,6 +146,54 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             zweiter_aufruf.kwargs,
             {"address": "11:22:33:44:55:66", "pin": None, "default_timeout": 7.0},
         )
+    async def test_ble_retry_einmal_erster_versuch_fehlt_zweiter_erfolgreich(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=4.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin="123456",
+            ble_retry_einmal=True,
+        )
+        geraet = SimpleNamespace(address="AA:00:BB:11:CC:22")
+        erwarteter_client = object()
+        create_ble_mock = AsyncMock(side_effect=[RuntimeError("temporärer BLE-Fehler"), erwarteter_client])
+
+        with patch.object(self.modul, "ble_geraet_interaktiv_auswaehlen", AsyncMock(return_value=geraet)), patch.object(
+            self.modul.MeshCore, "create_ble", create_ble_mock, create=True
+        ), patch.object(self.modul.asyncio, "sleep", AsyncMock()) as sleep_mock:
+            client = await self.modul.meshcore_verbinden(optionen)
+
+        self.assertIs(client, erwarteter_client)
+        self.assertEqual(create_ble_mock.await_count, 2)
+        sleep_mock.assert_awaited_once_with(1.0)
+
+    async def test_ble_retry_einmal_beide_versuche_fehlschlag_klare_endmeldung(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=6.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin="123456",
+            ble_retry_einmal=True,
+        )
+        geraet = SimpleNamespace(address="FF:EE:DD:CC:BB:AA")
+        create_ble_mock = AsyncMock(side_effect=[RuntimeError("erster Fehler"), RuntimeError("zweiter Fehler")])
+
+        with patch.object(self.modul, "ble_geraet_interaktiv_auswaehlen", AsyncMock(return_value=geraet)), patch.object(
+            self.modul.MeshCore, "create_ble", create_ble_mock, create=True
+        ), patch.object(self.modul.asyncio, "sleep", AsyncMock()):
+            with self.assertRaises(self.modul.Verbindungsfehler) as context:
+                await self.modul.meshcore_verbinden(optionen)
+
+        meldung = str(context.exception)
+        self.assertIn("BLE-Verbindung endgültig fehlgeschlagen", meldung)
+        self.assertIn("Zieladresse=FF:EE:DD:CC:BB:AA", meldung)
+        self.assertIn("Timeout=6.0s", meldung)
+        self.assertIn("Mögliche Ursachen", meldung)
+
 
 
 if __name__ == "__main__":
