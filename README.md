@@ -40,7 +40,7 @@ Optionen:
 ## Server starten
 
 ```bash
-python scripts/meshcore_advert_server.py --host 0.0.0.0 --port 8080 --db data/meshcore_map.db
+python scripts/meshcore_advert_server.py --host 0.0.0.0 --port 8023 --db data/meshcore_map.db
 ```
 
 ### Endpunkte
