@@ -12,6 +12,7 @@ from getpass import getpass
 from pathlib import Path
 from typing import Any
 from urllib import request
+from urllib.parse import urlsplit, urlunsplit
 
 from meshcore import EventType, MeshCore
 
@@ -51,7 +52,7 @@ STANDARD_KONFIGURATION = {
     "timeout": 10.0,
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
-    "server_url": None,
+    "server_url": "https://mesh.do1ffe.de",
     "ble_retry_einmal": True,
 }
 
@@ -485,7 +486,7 @@ def kompakte_server_info(log_daten: dict[str, Any]) -> str:
 
 def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
-    ziel = server_url.rstrip("/") + "/api/events"
+    ziel = server_api_events_url(server_url)
     payload_typename = ermittle_payload_typename(log_daten)
     server_payload = dict(log_daten)
     if payload_typename and "payload_typename" not in server_payload:
@@ -502,12 +503,16 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
             raise Verbindungsfehler(
                 f"Server meldete HTTP {antwort.status} bei Übertragung an {ziel}."
             )
+        print(
+            f"[INFO] Serverantwort HTTP {antwort.status} für Event-Typ {payload_typename or "<unbekannt>"}."
+        )
 
 
 def server_beim_start_pruefen(server_url: str) -> None:
     """Prüft beim Programmstart, ob der Server erreichbar ist und POST-Daten verarbeitet."""
-    ziel = server_url.rstrip("/") + "/api/events"
+    ziel = server_api_events_url(server_url)
     pruef_payload = json.dumps({}, ensure_ascii=False).encode("utf-8")
+    print(f"[INFO] Prüfe Server-Verbindung über {ziel} …")
     req = request.Request(
         ziel,
         data=pruef_payload,
@@ -528,6 +533,28 @@ def server_beim_start_pruefen(server_url: str) -> None:
             "Serverprüfung fehlgeschlagen: Unerwarteter HTTP-Status "
             f"{status} bei POST auf {ziel}."
         )
+
+    print(f"[INFO] Server erreichbar (HTTP {status}) und POST-Endpunkt antwortet.")
+
+
+def server_api_events_url(server_url: str) -> str:
+    """Normalisiert eine Basis- oder Endpunkt-URL auf den POST-Endpunkt /api/events."""
+    teile = urlsplit(server_url.strip())
+    if not teile.scheme or not teile.netloc:
+        raise Verbindungsfehler(
+            "Server-URL ist ungültig. Erwartet wird eine absolute URL wie "
+            "https://mesh.do1ffe.de oder https://mesh.do1ffe.de/api/events."
+        )
+
+    pfad = (teile.path or "").rstrip("/")
+    if pfad.endswith("/api/events"):
+        normierter_pfad = pfad
+    elif pfad:
+        normierter_pfad = pfad + "/api/events"
+    else:
+        normierter_pfad = "/api/events"
+
+    return urlunsplit((teile.scheme, teile.netloc, normierter_pfad, teile.query, teile.fragment))
 
 
 def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
