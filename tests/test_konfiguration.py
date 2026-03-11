@@ -177,6 +177,20 @@ class TestAdvertSerialisierung(unittest.TestCase):
         self.assertTrue(self.modul.ist_path({"payload_typename": "PATH"}))
         self.assertFalse(self.modul.ist_path({"payload_typename": "ADVERT"}))
 
+    def test_ermittle_payload_typename_unterstuetzt_alternative_schluessel(self):
+        self.assertEqual(
+            self.modul.ermittle_payload_typename({"payloadTypeName": "advert"}),
+            "ADVERT",
+        )
+        self.assertEqual(
+            self.modul.ermittle_payload_typename({"payload_type": "path"}),
+            "PATH",
+        )
+
+    def test_ist_advert_und_ist_path_nutzen_alternative_typfelder(self):
+        self.assertTrue(self.modul.ist_advert({"payloadTypeName": "ADVERT"}))
+        self.assertTrue(self.modul.ist_path({"payload_type": "PATH"}))
+
     def test_soll_an_server_gesendet_werden_fuer_advert_immer_wahr(self):
         self.assertTrue(
             self.modul.soll_an_server_gesendet_werden(
@@ -538,6 +552,28 @@ class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(ausgabe.startswith("[INFO] An Server übertragen: typ=ADVERT") for ausgabe in ausgaben)
         )
+
+
+class TestServerPayloadAufbereitung(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_event_an_server_senden_setzt_payload_typename_nach(self):
+        log_daten = {"payloadTypeName": "PATH", "path": ["a1b2", "c3d4"]}
+
+        with patch.object(self.modul.request, "Request") as request_mock, patch.object(
+            self.modul.request,
+            "urlopen",
+        ) as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
+            self.modul.event_an_server_senden("https://server.example", log_daten)
+
+        _, kwargs = request_mock.call_args
+        payload = json.loads(kwargs["data"].decode("utf-8"))
+        self.assertEqual(payload["payload_typename"], "PATH")
 
 
 

@@ -304,7 +304,19 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
 
 def ist_advert(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag ein ADVERT ist."""
-    return log_daten.get("payload_typename") == "ADVERT"
+    return ermittle_payload_typename(log_daten) == "ADVERT"
+
+
+def ermittle_payload_typename(log_daten: dict[str, Any]) -> str | None:
+    """Liest den Payload-Typ robust aus verschiedenen Feldnamen aus."""
+    for schluessel in ("payload_typename", "payloadTypeName", "payload_type"):
+        rohwert = log_daten.get(schluessel)
+        if rohwert is None:
+            continue
+        text = str(rohwert).strip()
+        if text:
+            return text.upper()
+    return None
 
 
 def ist_repeater_advert(log_daten: dict[str, Any]) -> bool:
@@ -408,12 +420,12 @@ def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
 
 def ist_path(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag ein PATH ist."""
-    return log_daten.get("payload_typename") == "PATH"
+    return ermittle_payload_typename(log_daten) == "PATH"
 
 
 def soll_an_server_gesendet_werden(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag gemäß Server-Regel übertragen werden soll."""
-    return ist_advert(log_daten) or bool(log_daten.get("path"))
+    return ist_advert(log_daten) or ist_path(log_daten) or bool(log_daten.get("path"))
 
 
 def _wert_gekuerzt_formatieren(wert: Any, max_laenge: int) -> str:
@@ -435,7 +447,7 @@ def _wert_gekuerzt_formatieren(wert: Any, max_laenge: int) -> str:
 
 def kompakte_server_info(log_daten: dict[str, Any]) -> str:
     """Erzeugt eine kompakte Infozeile zu erfolgreich gesendeten Daten."""
-    payload_typ = _wert_gekuerzt_formatieren(log_daten.get("payload_typename"), 24)
+    payload_typ = _wert_gekuerzt_formatieren(ermittle_payload_typename(log_daten), 24)
     schluessel = log_daten.get("adv_key") or log_daten.get("public_key")
     schluessel_text = _wert_gekuerzt_formatieren(schluessel, 20)
     pfad_text = _wert_gekuerzt_formatieren(log_daten.get("path"), 60)
@@ -449,7 +461,11 @@ def kompakte_server_info(log_daten: dict[str, Any]) -> str:
 def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
     ziel = server_url.rstrip("/") + "/api/events"
-    roh = json.dumps(json_sicherer_wert(log_daten), ensure_ascii=False).encode("utf-8")
+    payload_typename = ermittle_payload_typename(log_daten)
+    server_payload = dict(log_daten)
+    if payload_typename and "payload_typename" not in server_payload:
+        server_payload["payload_typename"] = payload_typename
+    roh = json.dumps(json_sicherer_wert(server_payload), ensure_ascii=False).encode("utf-8")
     req = request.Request(ziel, data=roh, headers={"Content-Type": "application/json"}, method="POST")
     with request.urlopen(req, timeout=5.0) as antwort:
         if antwort.status >= 300:
