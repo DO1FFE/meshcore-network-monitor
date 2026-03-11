@@ -261,17 +261,34 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
     self_info = client.self_info or {}
     name = self_info.get("name", "<unbekannt>")
 
+    def _normalisierte_prozentzahl(zahl: float) -> float:
+        if 0.0 <= zahl <= 1.0:
+            return zahl * 100.0
+        if 1.0 < zahl <= 100.0:
+            return zahl
+        if 1000.0 <= zahl <= 5000.0:
+            # Viele Firmwarestände liefern die Batteriespannung in mV (z. B. 4200).
+            untergrenze_mv = 3000.0
+            obergrenze_mv = 4200.0
+            prozent = ((zahl - untergrenze_mv) / (obergrenze_mv - untergrenze_mv)) * 100.0
+            return max(0.0, min(100.0, prozent))
+        return zahl
+
     def _zu_prozent_text(wert: Any) -> str | None:
         if wert is None:
             return None
         if isinstance(wert, (int, float)):
-            if isinstance(wert, float) and 0.0 <= wert <= 1.0:
-                return f"{wert * 100:.0f}%"
-            return f"{wert:.0f}%"
+            return f"{_normalisierte_prozentzahl(float(wert)):.0f}%"
         if isinstance(wert, str):
             text = wert.strip()
-            if text:
-                return text if text.endswith("%") else f"{text}%"
+            if not text:
+                return None
+            if text.endswith("%"):
+                return text
+            try:
+                return f"{_normalisierte_prozentzahl(float(text)):.0f}%"
+            except ValueError:
+                return f"{text}%"
         return None
 
     battery_text = None
@@ -474,6 +491,32 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
             )
 
 
+def server_beim_start_pruefen(server_url: str) -> None:
+    """Prüft beim Programmstart, ob der Server erreichbar ist und POST-Daten verarbeitet."""
+    ziel = server_url.rstrip("/") + "/api/events"
+    pruef_payload = json.dumps({}, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        ziel,
+        data=pruef_payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with request.urlopen(req, timeout=5.0) as antwort:
+            status = int(getattr(antwort, "status", 0) or 0)
+    except Exception as exc:
+        raise Verbindungsfehler(
+            f"Serverprüfung fehlgeschlagen: {server_url} ist nicht erreichbar oder nimmt keine Daten an ({exc})."
+        ) from exc
+
+    if status not in {200, 201, 202, 400}:
+        raise Verbindungsfehler(
+            "Serverprüfung fehlgeschlagen: Unerwarteter HTTP-Status "
+            f"{status} bei POST auf {ziel}."
+        )
+
+
 def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
     """Speichert einen Datensatz als JSONL-Zeile."""
     pfad.parent.mkdir(parents=True, exist_ok=True)
@@ -659,6 +702,9 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
 async def async_hauptprogramm() -> int:
     """Asynchroner Programmeinstieg."""
     optionen = argumente_einlesen()
+
+    if optionen.server_url:
+        server_beim_start_pruefen(optionen.server_url)
 
     pin = optionen.pin or getpass("PIN eingeben: ")
     if not pin:

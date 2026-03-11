@@ -418,6 +418,25 @@ class TestGeraeteinformationen(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Name      : Node-B", ausgaben)
         self.assertIn("Akkustand : 51%", ausgaben)
 
+    async def test_geraeteinformationen_normalisiert_vierstelliges_batterie_mv_format(self):
+        client = SimpleNamespace(
+            self_info={"name": "Node-C"},
+            commands=SimpleNamespace(
+                get_bat=AsyncMock(
+                    return_value=SimpleNamespace(
+                        type=self.modul.EventType.MSG_SENT,
+                        payload={"battery_level": 4200},
+                    )
+                )
+            ),
+        )
+
+        with patch("builtins.print") as print_mock:
+            await self.modul.geraeteinformationen_ausgeben(client)
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("Akkustand : 100%", ausgaben)
+
 
 class TestAdvertPersistierung(unittest.TestCase):
     @classmethod
@@ -552,6 +571,24 @@ class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any(ausgabe.startswith("[INFO] An Server übertragen: typ=ADVERT") for ausgabe in ausgaben)
         )
+
+
+class TestServerStartPruefung(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_server_beim_start_pruefen_akzeptiert_status_400_als_erreichbar(self):
+        with patch.object(self.modul.request, "urlopen") as urlopen_mock:
+            urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=400)
+            self.modul.server_beim_start_pruefen("https://mesh.do1ffe.de")
+
+    def test_server_beim_start_pruefen_wirft_fehler_bei_netzwerkproblem(self):
+        with patch.object(self.modul.request, "urlopen", side_effect=RuntimeError("down")):
+            with self.assertRaises(self.modul.Verbindungsfehler):
+                self.modul.server_beim_start_pruefen("https://mesh.do1ffe.de")
 
 
 class TestServerPayloadAufbereitung(unittest.TestCase):
