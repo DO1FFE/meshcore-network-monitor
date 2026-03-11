@@ -322,7 +322,7 @@ class Datenbank:
             return hashlib.sha256(roh.encode("utf-8")).hexdigest()
 
         if typ == "PATH":
-            roh = f"PATH:{(prefix or "").strip().lower()}:{(path_text or "").strip().lower()}"
+            roh = f"PATH:{(prefix or '').strip().lower()}:{(path_text or '').strip().lower()}"
             return hashlib.sha256(roh.encode("utf-8")).hexdigest()
 
         roh = json.dumps({"typ": typ, "public_key": public_key, "prefix": prefix, "path": path_text}, ensure_ascii=False, sort_keys=True)
