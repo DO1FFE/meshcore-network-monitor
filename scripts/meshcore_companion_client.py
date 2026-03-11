@@ -280,6 +280,26 @@ def ist_repeater_advert(log_daten: dict[str, Any]) -> bool:
     )
 
 
+def json_sicherer_wert(wert: Any) -> Any:
+    """Normalisiert Werte rekursiv auf JSON-kompatible Datentypen."""
+    if isinstance(wert, dict):
+        return {str(schluessel): json_sicherer_wert(inhalt) for schluessel, inhalt in wert.items()}
+
+    if isinstance(wert, list):
+        return [json_sicherer_wert(eintrag) for eintrag in wert]
+
+    if isinstance(wert, tuple):
+        return [json_sicherer_wert(eintrag) for eintrag in wert]
+
+    if isinstance(wert, (bytes, bytearray)):
+        return wert.hex()
+
+    if wert is None or isinstance(wert, (str, int, float, bool)):
+        return wert
+
+    return str(wert)
+
+
 def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
     """Bereitet ADVERT-Felder strukturiert für JSONL auf."""
     daten = {
@@ -316,14 +336,14 @@ def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
-    return daten
+    return json_sicherer_wert(daten)
 
 
 def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
     """Speichert einen Datensatz als JSONL-Zeile."""
     pfad.parent.mkdir(parents=True, exist_ok=True)
     with pfad.open("a", encoding="utf-8") as datei:
-        datei.write(json.dumps(advert_daten, ensure_ascii=False) + "\n")
+        datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
 async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:

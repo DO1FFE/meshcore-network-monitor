@@ -89,6 +89,48 @@ class TestKonfiguration(unittest.TestCase):
         self.assertFalse(optionen.ble_scan)
 
 
+class TestAdvertSerialisierung(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_json_sicherer_wert_normalisiert_problematische_typen_rekursiv(self):
+        klasse_unbekannt = type("KlasseUnbekannt", (), {"__str__": lambda self: "objekt-text"})
+        rohwert = {
+            "bytes": b"\x00\xff",
+            "bytearray": bytearray(b"\x01\x02"),
+            "liste": [1, b"\x03"],
+            "tuple": (True, b"\x04"),
+            "objekt": klasse_unbekannt(),
+        }
+
+        normalisiert = self.modul.json_sicherer_wert(rohwert)
+
+        self.assertEqual(normalisiert["bytes"], "00ff")
+        self.assertEqual(normalisiert["bytearray"], "0102")
+        self.assertEqual(normalisiert["liste"], [1, "03"])
+        self.assertEqual(normalisiert["tuple"], [True, "04"])
+        self.assertEqual(normalisiert["objekt"], "objekt-text")
+
+    def test_advert_aufbereiten_macht_weitere_felder_json_sicher(self):
+        advert = self.modul.advert_aufbereiten(
+            {
+                "payload_typename": "ADVERT",
+                "adv_type": self.modul.REPEATER_TYP_NUMMER,
+                "adv_name": "Node",
+                "adv_key": "abc",
+                "raw_payload": b"\xaa\xbb",
+                "nested": {"token": bytearray(b"\x10")},
+            }
+        )
+
+        self.assertEqual(advert["weitere_felder"]["raw_payload"], "aabb")
+        self.assertEqual(advert["weitere_felder"]["nested"]["token"], "10")
+
+
+
 class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
