@@ -451,7 +451,7 @@ def extrahiere_path(log_daten: dict[str, Any]) -> Any:
 
 def soll_an_server_gesendet_werden(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag gemäß Server-Regel übertragen werden soll."""
-    return ist_advert(log_daten) or ist_path(log_daten) or extrahiere_path(log_daten) is not None
+    return ist_advert(log_daten) or ist_path(log_daten)
 
 
 def _wert_gekuerzt_formatieren(wert: Any, max_laenge: int) -> str:
