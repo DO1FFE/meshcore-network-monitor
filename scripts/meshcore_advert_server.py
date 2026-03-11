@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -217,6 +218,7 @@ class Datenbank:
 
                 CREATE TABLE IF NOT EXISTS adverts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_schluessel TEXT,
                     received_at TEXT NOT NULL,
                     repeater_id INTEGER,
                     prefix TEXT,
@@ -231,6 +233,7 @@ class Datenbank:
 
                 CREATE TABLE IF NOT EXISTS paths (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_schluessel TEXT,
                     received_at TEXT NOT NULL,
                     source_prefix TEXT,
                     path TEXT,
@@ -239,6 +242,18 @@ class Datenbank:
                 """
             )
             self._migration_altbestand()
+            self.verbindung.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_adverts_event_schluessel
+                ON adverts(event_schluessel)
+                """
+            )
+            self.verbindung.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_paths_event_schluessel
+                ON paths(event_schluessel)
+                """
+            )
             self.verbindung.commit()
 
     def _migration_altbestand(self) -> None:
@@ -283,8 +298,35 @@ class Datenbank:
         self.verbindung.execute("DROP TABLE repeaters_alt")
 
         advert_spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(adverts)")}
+        if "event_schluessel" not in advert_spalten:
+            self.verbindung.execute("ALTER TABLE adverts ADD COLUMN event_schluessel TEXT")
         if "repeater_id" not in advert_spalten:
             self.verbindung.execute("ALTER TABLE adverts ADD COLUMN repeater_id INTEGER")
+
+        path_spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(paths)")}
+        if "event_schluessel" not in path_spalten:
+            self.verbindung.execute("ALTER TABLE paths ADD COLUMN event_schluessel TEXT")
+
+    @staticmethod
+    def _event_schluessel(
+        typ: str,
+        *,
+        public_key: str | None,
+        prefix: str | None,
+        path_text: str | None,
+    ) -> str:
+        if typ == "ADVERT":
+            identitaet = public_key or prefix
+            identitaet = (identitaet or json.dumps({"public_key": public_key, "prefix": prefix}, ensure_ascii=False, sort_keys=True))
+            roh = f"ADVERT:{identitaet.strip().lower()}"
+            return hashlib.sha256(roh.encode("utf-8")).hexdigest()
+
+        if typ == "PATH":
+            roh = f"PATH:{(prefix or "").strip().lower()}:{(path_text or "").strip().lower()}"
+            return hashlib.sha256(roh.encode("utf-8")).hexdigest()
+
+        roh = json.dumps({"typ": typ, "public_key": public_key, "prefix": prefix, "path": path_text}, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(roh.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _koordinate(payload: dict[str, Any], feld_adv: str, feld_std: str) -> float | None:
@@ -378,6 +420,12 @@ class Datenbank:
         longitude = self._koordinate(payload, "adv_lon", "longitude")
 
         with self._sperre:
+            event_schluessel = self._event_schluessel(
+                typ,
+                public_key=public_key,
+                prefix=prefix,
+                path_text=path_text,
+            )
             if typ == "ADVERT":
                 repeater_id = None
                 if prefix:
@@ -393,10 +441,23 @@ class Datenbank:
                     markiere_prefix_als_benutzt(self.unbenutzte_prefix_datei, prefix)
                 self.verbindung.execute(
                     """
-                    INSERT INTO adverts (received_at, repeater_id, prefix, name, public_key, latitude, longitude, path, payload_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO adverts (
+                        event_schluessel, received_at, repeater_id, prefix, name, public_key, latitude, longitude, path, payload_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT DO UPDATE SET
+                        received_at = excluded.received_at,
+                        repeater_id = COALESCE(excluded.repeater_id, adverts.repeater_id),
+                        prefix = COALESCE(excluded.prefix, adverts.prefix),
+                        name = COALESCE(excluded.name, adverts.name),
+                        public_key = COALESCE(excluded.public_key, adverts.public_key),
+                        latitude = COALESCE(excluded.latitude, adverts.latitude),
+                        longitude = COALESCE(excluded.longitude, adverts.longitude),
+                        path = COALESCE(excluded.path, adverts.path),
+                        payload_json = excluded.payload_json
                     """,
                     (
+                        event_schluessel,
                         zeit,
                         repeater_id,
                         prefix,
@@ -411,10 +472,15 @@ class Datenbank:
             else:
                 self.verbindung.execute(
                     """
-                    INSERT INTO paths (received_at, source_prefix, path, payload_json)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO paths (event_schluessel, received_at, source_prefix, path, payload_json)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT DO UPDATE SET
+                        received_at = excluded.received_at,
+                        source_prefix = COALESCE(excluded.source_prefix, paths.source_prefix),
+                        path = COALESCE(excluded.path, paths.path),
+                        payload_json = excluded.payload_json
                     """,
-                    (zeit, prefix, path_text, json.dumps(payload, ensure_ascii=False)),
+                    (event_schluessel, zeit, prefix, path_text, json.dumps(payload, ensure_ascii=False)),
                 )
             self.verbindung.commit()
 

@@ -113,6 +113,56 @@ class TestAdvertServer(unittest.TestCase):
         self.assertNotIn("ab", prefixe_nach_zweitem_event)
         self.assertEqual(len(prefixe_nach_zweitem_event), 255)
 
+    def test_doppelte_advert_events_werden_aktualisiert_statt_dupliziert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            ereignis_alt = {
+                "payload_typename": "ADVERT",
+                "adv_name": "Repeater-Alt",
+                "adv_key": "ab77ff00",
+                "adv_lat": 50.0,
+                "adv_lon": 8.0,
+            }
+            ereignis_neu = {
+                "payload_typename": "ADVERT",
+                "adv_name": "Repeater-Neu",
+                "adv_key": "ab77ff00",
+                "adv_lat": 50.0,
+                "adv_lon": 8.0,
+            }
+
+            db.speichere_event(ereignis_alt)
+            db.speichere_event(ereignis_neu)
+
+            anzahl_adverts = db.verbindung.execute("SELECT COUNT(*) FROM adverts").fetchone()[0]
+            gespeicherter_name = db.verbindung.execute(
+                "SELECT name FROM adverts LIMIT 1"
+            ).fetchone()[0]
+
+        self.assertEqual(anzahl_adverts, 1)
+        self.assertEqual(gespeicherter_name, "Repeater-Neu")
+
+    def test_doppelte_path_events_werden_aktualisiert_statt_dupliziert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            ereignis_alt = {
+                "payload_typename": "PATH",
+                "public_key": "ab77ff00",
+                "path": "a1b2",
+            }
+            ereignis_neu = {
+                "payload_typename": "PATH",
+                "public_key": "ab77ff00",
+                "path": "a1b2",
+            }
+
+            db.speichere_event(ereignis_alt)
+            db.speichere_event(ereignis_neu)
+
+            anzahl_paths = db.verbindung.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
+
+        self.assertEqual(anzahl_paths, 1)
+
     def test_datenbank_speichert_nur_advert_und_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
