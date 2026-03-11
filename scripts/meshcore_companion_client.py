@@ -23,7 +23,7 @@ except ImportError:  # BLE ist optional und wird nur für --ble-scan benötigt.
     BleakDeviceNotFoundError = Exception
     BleakDBusError = Exception
 
-REPEATER_TYP_NUMMER = 0x01
+REPEATER_TYP_NUMMER = 0x02
 AUSGABE_PFAD_STANDARD = Path("data/repeater_adverts.jsonl")
 
 
@@ -258,13 +258,40 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
     self_info = client.self_info or {}
     name = self_info.get("name", "<unbekannt>")
 
-    bat_event = await client.commands.get_bat()
-    if bat_event is None or bat_event.type == EventType.ERROR:
-        raise Verbindungsfehler("Akkustand konnte nicht abgefragt werden.")
+    def _zu_prozent_text(wert: Any) -> str | None:
+        if wert is None:
+            return None
+        if isinstance(wert, (int, float)):
+            if isinstance(wert, float) and 0.0 <= wert <= 1.0:
+                return f"{wert * 100:.0f}%"
+            return f"{wert:.0f}%"
+        if isinstance(wert, str):
+            text = wert.strip()
+            if text:
+                return text if text.endswith("%") else f"{text}%"
+        return None
 
-    payload = bat_event.payload if isinstance(bat_event.payload, dict) else {}
-    battery_raw = payload.get("battery_level")
-    battery_text = f"{battery_raw}%" if battery_raw is not None else "<nicht verfügbar>"
+    battery_text = None
+    try:
+        bat_event = await client.commands.get_bat()
+    except Exception:
+        bat_event = None
+
+    if bat_event is not None and bat_event.type != EventType.ERROR:
+        payload = bat_event.payload if isinstance(bat_event.payload, dict) else {}
+        for schluessel in ("battery_level", "battery", "percent", "level"):
+            battery_text = _zu_prozent_text(payload.get(schluessel))
+            if battery_text:
+                break
+
+    if not battery_text:
+        for schluessel in ("battery_level", "battery", "battery_percent", "percent", "level"):
+            battery_text = _zu_prozent_text(self_info.get(schluessel))
+            if battery_text:
+                break
+
+    if not battery_text:
+        battery_text = "<nicht verfügbar>"
 
     print("\n=== Geräteinformationen ===")
     print(f"Name      : {name}")
@@ -272,12 +299,37 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
     print("==========================\n")
 
 
+def ist_advert(log_daten: dict[str, Any]) -> bool:
+    """Prüft, ob ein RX-Log-Eintrag ein ADVERT ist."""
+    return log_daten.get("payload_typename") == "ADVERT"
+
+
 def ist_repeater_advert(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag ein ADVERT vom Typ REPEATER ist."""
-    return (
-        log_daten.get("payload_typename") == "ADVERT"
-        and log_daten.get("adv_type") == REPEATER_TYP_NUMMER
-    )
+    return ist_advert(log_daten) and log_daten.get("adv_type") == REPEATER_TYP_NUMMER
+
+
+def paket_mehrzeilig_ausgeben(paket: Any, praefix: str = "") -> None:
+    """Gibt ein RX-Paket mehrzeilig mit Einrückung aus."""
+    if isinstance(paket, dict):
+        for schluessel, wert in paket.items():
+            if isinstance(wert, (dict, list, tuple)):
+                print(f"{praefix}{schluessel}:")
+                paket_mehrzeilig_ausgeben(wert, praefix + "  ")
+            else:
+                print(f"{praefix}{schluessel}: {wert}")
+        return
+
+    if isinstance(paket, (list, tuple)):
+        for index, wert in enumerate(paket):
+            if isinstance(wert, (dict, list, tuple)):
+                print(f"{praefix}[{index}]:")
+                paket_mehrzeilig_ausgeben(wert, praefix + "  ")
+            else:
+                print(f"{praefix}[{index}]: {wert}")
+        return
+
+    print(f"{praefix}{paket}")
 
 
 def json_sicherer_wert(wert: Any) -> Any:
@@ -361,7 +413,7 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
-        zeile = {
+        paket = {
             "zeit": datetime.now(timezone.utc).isoformat(),
             "payload_typ": log_daten.get("payload_typename"),
             "route_typ": log_daten.get("route_typename"),
@@ -369,15 +421,23 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
             "snr": log_daten.get("snr"),
             "daten": log_daten,
         }
-        print(json.dumps(zeile, ensure_ascii=False, default=str))
+        paket_mehrzeilig_ausgeben(paket)
+        print()
+        print()
 
-        if ist_repeater_advert(log_daten):
+        if ist_advert(log_daten):
             advert = advert_aufbereiten(log_daten)
             advert_persistieren(ausgabe_pfad, advert)
+            if ist_repeater_advert(log_daten):
+                typtext = "REPEATER-ADVERT"
+            else:
+                typtext = "ADVERT"
             print(
-                "[INFO] REPEATER-ADVERT gespeichert: "
+                f"[INFO] {typtext} gespeichert: "
                 f"{advert.get('name') or '<ohne Name>'} / {advert.get('public_key')}"
             )
+            print()
+            print()
 
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 
@@ -385,7 +445,7 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
     try:
         while True:
             await asyncio.sleep(1)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[INFO] RX-Log beendet.")
 
 
@@ -530,7 +590,11 @@ async def async_hauptprogramm() -> int:
 
 def hauptprogramm() -> None:
     """Synchroner CLI-Startpunkt."""
-    raise SystemExit(asyncio.run(async_hauptprogramm()))
+    try:
+        raise SystemExit(asyncio.run(async_hauptprogramm()))
+    except KeyboardInterrupt:
+        print("\n[INFO] Programm durch Benutzer beendet.")
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":

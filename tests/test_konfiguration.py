@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import sys
@@ -128,6 +129,32 @@ class TestAdvertSerialisierung(unittest.TestCase):
 
         self.assertEqual(advert["weitere_felder"]["raw_payload"], "aabb")
         self.assertEqual(advert["weitere_felder"]["nested"]["token"], "10")
+
+    def test_ist_advert_und_ist_repeater_advert_unterscheiden_typen(self):
+        advert = {"payload_typename": "ADVERT", "adv_type": 2}
+        non_repeater = {"payload_typename": "ADVERT", "adv_type": 1}
+
+        self.assertTrue(self.modul.ist_advert(advert))
+        self.assertTrue(self.modul.ist_repeater_advert(advert))
+        self.assertTrue(self.modul.ist_advert(non_repeater))
+        self.assertFalse(self.modul.ist_repeater_advert(non_repeater))
+
+    def test_paket_mehrzeilig_ausgeben_zeigt_parameter_je_zeile(self):
+        paket = {
+            "zeit": "2026-03-11T00:00:00+00:00",
+            "daten": {"payload_typ": "ADVERT", "werte": [1, 2]},
+        }
+
+        with patch("builtins.print") as print_mock:
+            self.modul.paket_mehrzeilig_ausgeben(paket)
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list]
+        self.assertIn("zeit: 2026-03-11T00:00:00+00:00", ausgaben)
+        self.assertIn("daten:", ausgaben)
+        self.assertIn("  payload_typ: ADVERT", ausgaben)
+        self.assertIn("  werte:", ausgaben)
+        self.assertIn("    [0]: 1", ausgaben)
+        self.assertIn("    [1]: 2", ausgaben)
 
 
 
@@ -293,6 +320,47 @@ class TestAuthentifizieren(unittest.IsolatedAsyncioTestCase):
         client.commands.wait_for_events.assert_not_called()
 
 
+class TestGeraeteinformationen(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_geraeteinformationen_zeigt_akkustand_aus_get_bat(self):
+        client = SimpleNamespace(
+            self_info={"name": "Node-A"},
+            commands=SimpleNamespace(
+                get_bat=AsyncMock(
+                    return_value=SimpleNamespace(
+                        type=self.modul.EventType.MSG_SENT,
+                        payload={"battery_level": 73},
+                    )
+                )
+            ),
+        )
+
+        with patch("builtins.print") as print_mock:
+            await self.modul.geraeteinformationen_ausgeben(client)
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("Name      : Node-A", ausgaben)
+        self.assertIn("Akkustand : 73%", ausgaben)
+
+    async def test_geraeteinformationen_fallback_ohne_abbruch_wenn_get_bat_fehlt(self):
+        client = SimpleNamespace(
+            self_info={"name": "Node-B", "battery_level": 51},
+            commands=SimpleNamespace(get_bat=AsyncMock(side_effect=RuntimeError("nicht verfügbar"))),
+        )
+
+        with patch("builtins.print") as print_mock:
+            await self.modul.geraeteinformationen_ausgeben(client)
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("Name      : Node-B", ausgaben)
+        self.assertIn("Akkustand : 51%", ausgaben)
+
+
 class TestAdvertPersistierung(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -337,6 +405,28 @@ class TestAdvertPersistierung(unittest.TestCase):
         self.assertEqual(eingelesen["public_key"], "001122")
         self.assertEqual(eingelesen["koordinaten"], {"latitude": 48.137, "longitude": 11.575})
         self.assertEqual(eingelesen["adv_typ"], 3)
+
+
+class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_rx_log_modus_beendet_sauber_bei_cancelled_error(self):
+        client = SimpleNamespace(subscribe=lambda *_args, **_kwargs: None)
+
+        with patch.object(
+            self.modul.asyncio,
+            "sleep",
+            AsyncMock(side_effect=asyncio.CancelledError()),
+        ), patch("builtins.print") as print_mock:
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("[INFO] RX-Log läuft. Mit Strg+C beenden.", ausgaben)
+        self.assertIn("\n[INFO] RX-Log beendet.", ausgaben)
 
 
 
