@@ -603,6 +603,21 @@ class TestServerStartPruefung(unittest.TestCase):
         self.assertTrue(any(ausgabe.startswith("[INFO] Prüfe Server-Verbindung über https://mesh.do1ffe.de/api/events") for ausgabe in ausgaben))
         self.assertIn("[INFO] Server erreichbar (HTTP 400) und POST-Endpunkt antwortet.", ausgaben)
 
+    def test_server_beim_start_pruefen_akzeptiert_http_error_400_als_erreichbar(self):
+        http_fehler = self.modul.error.HTTPError(
+            url="https://mesh.do1ffe.de/api/events",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=None,
+        )
+
+        with patch.object(self.modul.request, "urlopen", side_effect=http_fehler), patch("builtins.print") as print_mock:
+            self.modul.server_beim_start_pruefen("https://mesh.do1ffe.de")
+
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertIn("[INFO] Server erreichbar (HTTP 400) und POST-Endpunkt antwortet.", ausgaben)
+
     def test_server_beim_start_pruefen_wirft_fehler_bei_netzwerkproblem(self):
         with patch.object(self.modul.request, "urlopen", side_effect=RuntimeError("down")):
             with self.assertRaises(self.modul.Verbindungsfehler):

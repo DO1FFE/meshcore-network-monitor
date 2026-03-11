@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Any
-from urllib import request
+from urllib import error, request
 from urllib.parse import urlsplit, urlunsplit
 
 from meshcore import EventType, MeshCore
@@ -523,6 +523,8 @@ def server_beim_start_pruefen(server_url: str) -> None:
     try:
         with request.urlopen(req, timeout=5.0) as antwort:
             status = int(getattr(antwort, "status", 0) or 0)
+    except error.HTTPError as exc:
+        status = int(getattr(exc, "code", 0) or 0)
     except Exception as exc:
         raise Verbindungsfehler(
             f"Serverprüfung fehlgeschlagen: {server_url} ist nicht erreichbar oder nimmt keine Daten an ({exc})."
