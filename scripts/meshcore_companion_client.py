@@ -282,6 +282,16 @@ def ist_repeater_advert(log_daten: dict[str, Any]) -> bool:
 
 def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
     """Bereitet ADVERT-Felder strukturiert für JSONL auf."""
+
+    def _json_wert_stabilisieren(wert: Any) -> Any:
+        if isinstance(wert, bytes):
+            return wert.hex()
+        if isinstance(wert, dict):
+            return {k: _json_wert_stabilisieren(v) for k, v in wert.items()}
+        if isinstance(wert, list):
+            return [_json_wert_stabilisieren(eintrag) for eintrag in wert]
+        return wert
+
     daten = {
         "zeitstempel_utc": datetime.now(timezone.utc).isoformat(),
         "name": log_daten.get("adv_name"),
@@ -298,7 +308,7 @@ def advert_aufbereiten(log_daten: dict[str, Any]) -> dict[str, Any]:
         "snr": log_daten.get("snr"),
         "pfad": log_daten.get("path"),
         "weitere_felder": {
-            k: v
+            k: _json_wert_stabilisieren(v)
             for k, v in log_daten.items()
             if k
             not in {
