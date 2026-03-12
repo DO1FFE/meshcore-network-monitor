@@ -25,7 +25,7 @@ except ImportError:  # BLE ist optional und wird nur für --ble-scan benötigt.
     BleakDeviceNotFoundError = Exception
     BleakDBusError = Exception
 
-REPEATER_TYP_NUMMER = 0x02
+REPEATER_TYP_NUMMER = 0x03
 AUSGABE_PFAD_STANDARD = Path("data/repeater_adverts.jsonl")
 
 
@@ -339,7 +339,14 @@ def ermittle_payload_typename(log_daten: dict[str, Any]) -> str | None:
 
 def ist_repeater_advert(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag ein ADVERT vom Typ REPEATER ist."""
-    return ist_advert(log_daten) and log_daten.get("adv_type") == REPEATER_TYP_NUMMER
+    adv_typ = log_daten.get("adv_type")
+    if isinstance(adv_typ, str):
+        try:
+            adv_typ = int(adv_typ.strip(), 0)
+        except ValueError:
+            return False
+
+    return ist_advert(log_daten) and adv_typ == REPEATER_TYP_NUMMER
 
 
 def paket_mehrzeilig_ausgeben(paket: Any, praefix: str = "") -> None:
