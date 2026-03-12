@@ -25,7 +25,7 @@ except ImportError:  # BLE ist optional und wird nur für --ble-scan benötigt.
     BleakDeviceNotFoundError = Exception
     BleakDBusError = Exception
 
-REPEATER_TYP_NUMMER = 0x03
+REPEATER_TYP_NUMMER = 0x02
 AUSGABE_PFAD_STANDARD = Path("data/repeater_adverts.jsonl")
 
 
