@@ -76,6 +76,14 @@ HTML_KARTE = """<!doctype html>
       line-height: 1;
       box-sizing: border-box;
     }
+    .schluessel-zeile {
+      display: block;
+      max-width: 220px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.8rem;
+    }
   </style>
 </head>
 <body>
@@ -102,7 +110,7 @@ HTML_KARTE = """<!doctype html>
         const prefixAnzeige = Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes.join(', ') : (n.prefix || '-');
         const roherPrefix = n.prefix || (Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes[0] : null) || '--';
         const markerText = String(roherPrefix).slice(0, 2).toLowerCase();
-        const popup = `<b>${n.name || 'Unbenannt'}</b><br>ID: ${n.id}<br>Prefix(e): ${prefixAnzeige}<br>Key: ${n.public_key || '-'}<br>Letztes ADVERT: ${n.last_seen || '-'}`;
+        const popup = `<b>${n.name || 'Unbenannt'}</b><br>ID: ${n.id}<br>Prefix(e): ${prefixAnzeige}<br>Key: <span class="schluessel-zeile">${n.public_key || '-'}</span><br>Letztes ADVERT: ${n.last_seen || '-'}`;
         const icon = L.divIcon({
           className: 'prefix-marker-container',
           html: `<div class="prefix-marker">${markerText}</div>`,
