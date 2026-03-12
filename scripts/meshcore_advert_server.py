@@ -108,7 +108,7 @@ HTML_KARTE = """<!doctype html>
         if (typeof n.latitude !== 'number' || typeof n.longitude !== 'number') continue;
         punkte.set(n.id, [n.latitude, n.longitude]);
         const prefixAnzeige = Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes.join(', ') : (n.prefix || '-');
-        const roherPrefix = n.prefix || (Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes[0] : null) || '--';
+        const roherPrefix = n.prefix || n.id || '--';
         const markerText = String(roherPrefix).slice(0, 2).toLowerCase();
         const popup = `<b>${n.name || 'Unbenannt'}</b><br>ID: ${n.id}<br>Prefix(e): ${prefixAnzeige}<br>Key: <span class="schluessel-zeile">${n.public_key || '-'}</span><br>Letztes ADVERT: ${n.last_seen || '-'}`;
         const icon = L.divIcon({
@@ -617,10 +617,11 @@ class Datenbank:
                 """
             ):
                 prefixes = [prefix for prefix in (zeile["prefixes"] or "").split(",") if prefix]
+                aktueller_prefix = prefix_aus_public_key(zeile["public_key"])
                 nodes.append(
                     {
                         "id": zeile["id"],
-                        "prefix": prefixes[0] if prefixes else None,
+                        "prefix": aktueller_prefix,
                         "prefixes": prefixes,
                         "name": zeile["name"],
                         "public_key": zeile["public_key"],
