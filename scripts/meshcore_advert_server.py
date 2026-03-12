@@ -30,12 +30,36 @@ HTML_KARTE = """<!doctype html>
   <style>
     body { margin: 0; font-family: sans-serif; }
     #karte { height: 100vh; width: 100vw; }
-    .panel { position: absolute; z-index: 1000; top: 12px; left: 12px; background: #fff; padding: 8px 10px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
+    .titel-panel {
+      position: absolute;
+      z-index: 1000;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-weight: 600;
+    }
+    .fusszeile {
+      position: absolute;
+      z-index: 1000;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.9);
+      padding: 6px 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
-  <div class=\"panel\">MeshCore Repeater Live-Karte</div>
+  <div class=\"titel-panel\">MeshCore Repeater Live-Karte</div>
   <div id=\"karte\"></div>
+  <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
   <script>
     const karte = L.map('karte').setView([51.0, 10.0], 6);
