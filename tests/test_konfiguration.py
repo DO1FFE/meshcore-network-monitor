@@ -191,10 +191,30 @@ class TestAdvertSerialisierung(unittest.TestCase):
         self.assertTrue(self.modul.ist_advert({"payloadTypeName": "ADVERT"}))
         self.assertTrue(self.modul.ist_path({"payload_type": "PATH"}))
 
-    def test_soll_an_server_gesendet_werden_fuer_advert_immer_wahr(self):
+    def test_soll_an_server_gesendet_werden_fuer_repeater_advert_wahr(self):
         self.assertTrue(
             self.modul.soll_an_server_gesendet_werden(
-                {"payload_typename": "ADVERT", "path": []}
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_type": self.modul.REPEATER_TYP_NUMMER,
+                }
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_fuer_nicht_repeater_advert_falsch(self):
+        self.assertFalse(
+            self.modul.soll_an_server_gesendet_werden(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_type": self.modul.REPEATER_TYP_NUMMER + 1,
+                }
+            )
+        )
+
+    def test_soll_an_server_gesendet_werden_fuer_advert_ohne_adv_type_falsch(self):
+        self.assertFalse(
+            self.modul.soll_an_server_gesendet_werden(
+                {"payload_typename": "ADVERT"}
             )
         )
 
@@ -572,6 +592,7 @@ class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
         ereignis = SimpleNamespace(
             payload={
                 "payload_typename": "ADVERT",
+                "adv_type": self.modul.REPEATER_TYP_NUMMER,
                 "adv_key": "00112233445566778899aabbccddeeff",
                 "adv_name": "Node-A",
                 "path": ["hop-1", "hop-2", "hop-3"],
