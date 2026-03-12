@@ -1,0 +1,6 @@
+# Kernabhängigkeit laut offizieller PyPI-Dokumentation:
+# https://pypi.org/project/meshcore/
+meshcore
+
+# Optional für den BLE-Scan-Modus (--ble-scan)
+bleak
