@@ -145,13 +145,21 @@ class TestAdvertSerialisierung(unittest.TestCase):
         self.assertEqual(advert["weitere_felder"]["nested"]["token"], "10")
 
     def test_ist_advert_und_ist_repeater_advert_unterscheiden_typen(self):
-        advert = {"payload_typename": "ADVERT", "adv_type": 2}
+        advert = {"payload_typename": "ADVERT", "adv_type": self.modul.REPEATER_TYP_NUMMER}
         non_repeater = {"payload_typename": "ADVERT", "adv_type": 1}
 
         self.assertTrue(self.modul.ist_advert(advert))
         self.assertTrue(self.modul.ist_repeater_advert(advert))
         self.assertTrue(self.modul.ist_advert(non_repeater))
         self.assertFalse(self.modul.ist_repeater_advert(non_repeater))
+
+
+    def test_ist_repeater_advert_akzeptiert_adv_type_als_string(self):
+        self.assertTrue(
+            self.modul.ist_repeater_advert(
+                {"payload_typename": "ADVERT", "adv_type": str(self.modul.REPEATER_TYP_NUMMER)}
+            )
+        )
 
     def test_paket_mehrzeilig_ausgeben_zeigt_parameter_je_zeile(self):
         paket = {
