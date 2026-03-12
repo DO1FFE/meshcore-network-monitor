@@ -426,6 +426,7 @@ class Datenbank:
         normalisierter_name = name.strip() if isinstance(name, str) else None
         if normalisierter_name == "":
             normalisierter_name = None
+        zu_speichernder_public_key = normalisierter_public_key
         repeater_id: int | None = None
 
         if normalisierter_public_key:
@@ -487,7 +488,7 @@ class Datenbank:
                 INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (name, public_key, latitude, longitude, zeit),
+                (name, zu_speichernder_public_key, latitude, longitude, zeit),
             )
             repeater_id = cursor.lastrowid
         else:
@@ -495,13 +496,21 @@ class Datenbank:
                 """
                 UPDATE repeaters
                 SET name = COALESCE(?, name),
-                    public_key = COALESCE(?, public_key),
+                    public_key = CASE WHEN ? IS NOT NULL THEN ? ELSE public_key END,
                     latitude = COALESCE(?, latitude),
                     longitude = COALESCE(?, longitude),
                     last_seen = ?
                 WHERE id = ?
                 """,
-                (name, public_key, latitude, longitude, zeit, repeater_id),
+                (
+                    name,
+                    zu_speichernder_public_key,
+                    zu_speichernder_public_key,
+                    latitude,
+                    longitude,
+                    zeit,
+                    repeater_id,
+                ),
             )
 
         self.verbindung.execute(
