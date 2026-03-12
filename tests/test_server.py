@@ -313,6 +313,34 @@ class TestAdvertServer(unittest.TestCase):
         self.assertEqual(aliases, {"a1", "b2"})
         self.assertGreater(zweite_last_seen, erste_last_seen)
 
+    def test_name_fallback_aktualisiert_public_key_bei_neuem_adv_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "r1",
+                    "adv_key": "B2-C3-AA11",
+                }
+            )
+
+            public_key = db.verbindung.execute(
+                "SELECT public_key FROM repeaters WHERE LOWER(name) = LOWER(?)",
+                ("R1",),
+            ).fetchone()[0]
+
+        self.assertEqual(public_key, "b2c3aa11")
+
     def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
