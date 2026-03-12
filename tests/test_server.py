@@ -208,6 +208,61 @@ class TestAdvertServer(unittest.TestCase):
         kanten = {(k["von_id"], k["nach_id"]) for k in daten["edges"]}
         self.assertTrue(any(von != nach for von, nach in kanten))
 
+    def test_gleiches_prefix_unterschiedlicher_key_bei_kurzer_distanz_erzeugt_zwei_knoten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R2",
+                    "adv_key": "a1c3dd11",
+                    "adv_lat": 50.01,
+                    "adv_lon": 8.01,
+                }
+            )
+
+            daten = db.map_daten()
+
+        knoten_mit_prefix = [n for n in daten["nodes"] if "a1" in (n.get("prefixes") or [])]
+        self.assertEqual(len(knoten_mit_prefix), 2)
+
+    def test_identischer_vollstaendiger_key_bleibt_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1-Update",
+                    "adv_key": "A1-B2-FF00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            daten = db.map_daten()
+
+        knoten_mit_prefix = [n for n in daten["nodes"] if "a1" in (n.get("prefixes") or [])]
+        self.assertEqual(len(knoten_mit_prefix), 1)
+        self.assertEqual(knoten_mit_prefix[0]["name"], "R1-Update")
+
     def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
@@ -237,6 +292,48 @@ class TestAdvertServer(unittest.TestCase):
             ids = {n["id"] for n in knoten_mit_prefix}
             self.assertEqual(len(ids), 2)
 
+
+    def test_map_daten_prefix_aufloesung_entfernt_keine_knoten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Start",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "a1b2",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A1-Nah",
+                    "adv_key": "a1b2ffff",
+                    "adv_lat": 50.05,
+                    "adv_lon": 8.0,
+                    "path": "1111",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A1-Zweit",
+                    "adv_key": "a1c3eeee",
+                    "adv_lat": 50.06,
+                    "adv_lon": 8.01,
+                }
+            )
+
+            daten = db.map_daten()
+
+        self.assertEqual(len(daten["nodes"]), 3)
+        namen = {eintrag["name"] for eintrag in daten["nodes"]}
+        self.assertIn("A1-Nah", namen)
+        self.assertIn("A1-Zweit", namen)
+        kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
+        self.assertTrue(any(von != nach for von, nach in kanten))
 
     def test_map_daten_waehlt_bei_mehreren_prefix_kandidaten_den_naechsten(self):
         with tempfile.TemporaryDirectory() as tmp:
