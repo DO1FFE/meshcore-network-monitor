@@ -189,6 +189,7 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "c3d4aa00",
                     "adv_lat": 51.1,
                     "adv_lon": 10.1,
+                    "path": "a1b2",
                 }
             )
             db.speichere_event(
@@ -257,6 +258,7 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "ab12bbbb",
                     "adv_lat": 50.05,
                     "adv_lon": 8.0,
+                    "path": "1111",
                 }
             )
             db.speichere_event(
@@ -273,8 +275,65 @@ class TestAdvertServer(unittest.TestCase):
 
         id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
         kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
-        self.assertIn((id_nach_name["Quelle"], id_nach_name["AB12-Nah"]), kanten)
+        self.assertIn(tuple(sorted((id_nach_name["Quelle"], id_nach_name["AB12-Nah"]))), kanten)
         self.assertNotIn((id_nach_name["Quelle"], id_nach_name["AB12-Fern"]), kanten)
+
+    def test_map_daten_einseitige_kante_wird_nicht_uebernommen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "cd34",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "B",
+                    "adv_key": "cd34bbbb",
+                    "adv_lat": 50.09,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            daten = db.map_daten()
+
+        self.assertEqual(daten["edges"], [])
+
+    def test_map_daten_bidirektionale_kante_wird_uebernommen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "A",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "cd34",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "B",
+                    "adv_key": "cd34bbbb",
+                    "adv_lat": 50.09,
+                    "adv_lon": 8.0,
+                    "path": "1111",
+                }
+            )
+
+            daten = db.map_daten()
+
+        id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
+        kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
+        self.assertIn(tuple(sorted((id_nach_name["A"], id_nach_name["B"]))), kanten)
 
     def test_map_daten_kante_unter_20_km_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,6 +355,7 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "cd34bbbb",
                     "adv_lat": 50.09,
                     "adv_lon": 8.0,
+                    "path": "1111",
                 }
             )
 
@@ -303,7 +363,7 @@ class TestAdvertServer(unittest.TestCase):
 
         id_nach_name = {eintrag["name"]: eintrag["id"] for eintrag in daten["nodes"]}
         kanten = {(kante["von_id"], kante["nach_id"]) for kante in daten["edges"]}
-        self.assertIn((id_nach_name["Start"], id_nach_name["Ziel-Nah"]), kanten)
+        self.assertIn(tuple(sorted((id_nach_name["Start"], id_nach_name["Ziel-Nah"]))), kanten)
 
     def test_map_daten_kante_ueber_20_km_wird_verworfen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -325,6 +385,7 @@ class TestAdvertServer(unittest.TestCase):
                     "adv_key": "cd34bbbb",
                     "adv_lat": 50.4,
                     "adv_lon": 8.0,
+                    "path": "1111",
                 }
             )
 
