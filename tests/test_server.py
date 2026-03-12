@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -262,6 +263,55 @@ class TestAdvertServer(unittest.TestCase):
         knoten_mit_prefix = [n for n in daten["nodes"] if "a1" in (n.get("prefixes") or [])]
         self.assertEqual(len(knoten_mit_prefix), 1)
         self.assertEqual(knoten_mit_prefix[0]["name"], "R1-Update")
+
+    def test_name_fallback_verknuepft_adverts_mit_abweichendem_prefix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            erste_last_seen = db.verbindung.execute(
+                "SELECT last_seen FROM repeaters WHERE name = ?",
+                ("R1",),
+            ).fetchone()[0]
+
+            time.sleep(0.01)
+
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "r1",
+                    "adv_key": "b2c3aa11",
+                }
+            )
+
+            anzahl_repeater = db.verbindung.execute("SELECT COUNT(*) FROM repeaters").fetchone()[0]
+            aliases = {
+                zeile[0]
+                for zeile in db.verbindung.execute(
+                    """
+                    SELECT a.prefix
+                    FROM repeater_aliases a
+                    JOIN repeaters r ON r.id = a.repeater_id
+                    WHERE LOWER(r.name) = LOWER(?)
+                    """,
+                    ("R1",),
+                )
+            }
+            zweite_last_seen = db.verbindung.execute(
+                "SELECT last_seen FROM repeaters WHERE LOWER(name) = LOWER(?)",
+                ("R1",),
+            ).fetchone()[0]
+
+        self.assertEqual(anzahl_repeater, 1)
+        self.assertEqual(aliases, {"a1", "b2"})
+        self.assertGreater(zweite_last_seen, erste_last_seen)
 
     def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
         with tempfile.TemporaryDirectory() as tmp:
