@@ -177,6 +177,15 @@ def _normalisiere_prefix(prefix: str | None) -> str | None:
     return normalisiert
 
 
+def _normalisiere_schluessel(schluessel: str | None) -> str | None:
+    if not schluessel:
+        return None
+    bereinigt = "".join(zeichen for zeichen in schluessel if zeichen.isalnum()).lower()
+    if not bereinigt:
+        return None
+    return bereinigt
+
+
 def _schreibe_prefixdatei_atomar(dateipfad: Path, prefixe: list[str]) -> None:
     dateipfad.parent.mkdir(parents=True, exist_ok=True)
     inhalt = "\n".join(prefixe) + "\n"
@@ -413,32 +422,47 @@ class Datenbank:
         public_key: str | None,
         zeit: str,
     ) -> int:
-        kandidaten = list(
-            self.verbindung.execute(
-                """
-                SELECT r.id, r.latitude, r.longitude
-                FROM repeaters r
-                JOIN repeater_aliases a ON a.repeater_id = r.id
-                WHERE a.prefix = ?
-                """,
-                (prefix,),
-            )
-        )
-
+        normalisierter_public_key = _normalisiere_schluessel(public_key)
         repeater_id: int | None = None
-        if latitude is not None and longitude is not None:
-            distanz_kandidaten: list[tuple[float, int]] = []
-            for kandidat in kandidaten:
-                if kandidat["latitude"] is None or kandidat["longitude"] is None:
-                    continue
-                distanz = distanz_km(latitude, longitude, kandidat["latitude"], kandidat["longitude"])
-                if distanz <= 20.0:
-                    distanz_kandidaten.append((distanz, kandidat["id"]))
-            if distanz_kandidaten:
-                distanz_kandidaten.sort(key=lambda eintrag: eintrag[0])
-                repeater_id = distanz_kandidaten[0][1]
-        elif kandidaten:
-            repeater_id = kandidaten[0]["id"]
+
+        if normalisierter_public_key:
+            for zeile in self.verbindung.execute(
+                """
+                SELECT id, public_key
+                FROM repeaters
+                WHERE public_key IS NOT NULL
+                """
+            ):
+                if _normalisiere_schluessel(zeile["public_key"]) == normalisierter_public_key:
+                    repeater_id = zeile["id"]
+                    break
+
+        if repeater_id is None and not normalisierter_public_key:
+            kandidaten = list(
+                self.verbindung.execute(
+                    """
+                    SELECT r.id, r.latitude, r.longitude
+                    FROM repeaters r
+                    JOIN repeater_aliases a ON a.repeater_id = r.id
+                    WHERE a.prefix = ?
+                    """,
+                    (prefix,),
+                )
+            )
+
+            if latitude is not None and longitude is not None:
+                distanz_kandidaten: list[tuple[float, int]] = []
+                for kandidat in kandidaten:
+                    if kandidat["latitude"] is None or kandidat["longitude"] is None:
+                        continue
+                    distanz = distanz_km(latitude, longitude, kandidat["latitude"], kandidat["longitude"])
+                    if distanz <= 20.0:
+                        distanz_kandidaten.append((distanz, kandidat["id"]))
+                if distanz_kandidaten:
+                    distanz_kandidaten.sort(key=lambda eintrag: eintrag[0])
+                    repeater_id = distanz_kandidaten[0][1]
+            elif kandidaten:
+                repeater_id = kandidaten[0]["id"]
 
         if repeater_id is None:
             cursor = self.verbindung.execute(
