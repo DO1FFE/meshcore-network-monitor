@@ -54,6 +54,28 @@ HTML_KARTE = """<!doctype html>
       box-shadow: 0 1px 4px rgba(0,0,0,0.2);
       font-size: 0.85rem;
     }
+    .prefix-marker-container {
+      background: transparent;
+      border: none;
+    }
+    .prefix-marker {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: 2px solid #1f2937;
+      background: #f8fafc;
+      color: #111827;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      text-transform: lowercase;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      line-height: 1;
+      box-sizing: border-box;
+    }
   </style>
 </head>
 <body>
@@ -78,8 +100,17 @@ HTML_KARTE = """<!doctype html>
         if (typeof n.latitude !== 'number' || typeof n.longitude !== 'number') continue;
         punkte.set(n.id, [n.latitude, n.longitude]);
         const prefixAnzeige = Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes.join(', ') : (n.prefix || '-');
+        const roherPrefix = n.prefix || (Array.isArray(n.prefixes) && n.prefixes.length ? n.prefixes[0] : null) || '--';
+        const markerText = String(roherPrefix).slice(0, 2).toLowerCase();
         const popup = `<b>${n.name || 'Unbenannt'}</b><br>ID: ${n.id}<br>Prefix(e): ${prefixAnzeige}<br>Key: ${n.public_key || '-'}<br>Letztes ADVERT: ${n.last_seen || '-'}`;
-        L.marker([n.latitude, n.longitude]).bindPopup(popup).addTo(markerEbene);
+        const icon = L.divIcon({
+          className: 'prefix-marker-container',
+          html: `<div class="prefix-marker">${markerText}</div>`,
+          iconSize: [34, 34],
+          iconAnchor: [17, 17],
+          popupAnchor: [0, -16]
+        });
+        L.marker([n.latitude, n.longitude], { icon }).bindPopup(popup).addTo(markerEbene);
       }
 
       for (const e of daten.edges) {
