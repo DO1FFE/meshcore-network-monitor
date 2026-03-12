@@ -529,7 +529,7 @@ class Datenbank:
                     continue
                 repeater_positionen[knoten["id"]] = (float(latitude), float(longitude))
 
-            edges: set[tuple[int, int]] = set()
+            gerichtete_kanten: set[tuple[int, int]] = set()
 
             def waehle_kandidat(prefix: str, vorherige_id: int | None) -> int | None:
                 kandidaten = alias_map.get(prefix, [])
@@ -561,7 +561,7 @@ class Datenbank:
                 lat_von, lon_von = repeater_positionen[von_id]
                 lat_nach, lon_nach = repeater_positionen[nach_id]
                 if distanz_km(lat_von, lon_von, lat_nach, lon_nach) <= 20.0:
-                    edges.add((von_id, nach_id))
+                    gerichtete_kanten.add((von_id, nach_id))
 
             def aufgeloeste_ids(segmente: list[str], start_id: int | None = None) -> list[int]:
                 ids: list[int] = []
@@ -601,6 +601,12 @@ class Datenbank:
                     ids = aufgeloeste_ids(segmente, start_id)
                     for a, b in zip(ids, ids[1:]):
                         kante_hinzufuegen(a, b)
+
+            edges: set[tuple[int, int]] = set()
+            for von_id, nach_id in gerichtete_kanten:
+                if (nach_id, von_id) not in gerichtete_kanten:
+                    continue
+                edges.add(tuple(sorted((von_id, nach_id))))
 
         return {
             "nodes": nodes,
