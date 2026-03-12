@@ -51,7 +51,10 @@ python scripts/meshcore_advert_server.py --host 0.0.0.0 --port 8023 --db data/me
 
 ## Kartenlogik
 
-- Repeater-Identität basiert auf den **ersten 2 Zeichen** des Public Keys (`prefix`, 2 Hexzeichen)
+- Repeater-Identität nutzt folgende Reihenfolge:
+  1. exakter Match über vollständigen Public Key (hat Vorrang)
+  2. Prefix-basierte Zuordnung (erste 2 Zeichen) inkl. Distanzlogik
+  3. Fallback über Repeater-Namen (case-insensitive), wenn genau ein Kandidat vorhanden ist
 - Marker zeigen:
   - Repeater-Name
   - Public Key

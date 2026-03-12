@@ -423,6 +423,9 @@ class Datenbank:
         zeit: str,
     ) -> int:
         normalisierter_public_key = _normalisiere_schluessel(public_key)
+        normalisierter_name = name.strip() if isinstance(name, str) else None
+        if normalisierter_name == "":
+            normalisierter_name = None
         repeater_id: int | None = None
 
         if normalisierter_public_key:
@@ -463,6 +466,20 @@ class Datenbank:
                     repeater_id = distanz_kandidaten[0][1]
             elif kandidaten:
                 repeater_id = kandidaten[0]["id"]
+
+        if repeater_id is None and normalisierter_name:
+            kandidaten_nach_name = list(
+                self.verbindung.execute(
+                    """
+                    SELECT id
+                    FROM repeaters
+                    WHERE LOWER(name) = LOWER(?)
+                    """,
+                    (normalisierter_name,),
+                )
+            )
+            if len(kandidaten_nach_name) == 1:
+                repeater_id = kandidaten_nach_name[0]["id"]
 
         if repeater_id is None:
             cursor = self.verbindung.execute(
