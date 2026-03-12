@@ -341,6 +341,33 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(public_key, "b2c3aa11")
 
+    def test_map_daten_nimmt_prefix_aus_letztem_public_key_statt_alias_reihenfolge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Repeater-X",
+                    "adv_key": "a1b2ff00",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "repeater-x",
+                    "adv_key": "b2c3aa11",
+                }
+            )
+
+            daten = db.map_daten()
+
+        self.assertEqual(len(daten["nodes"]), 1)
+        knoten = daten["nodes"][0]
+        self.assertEqual(knoten["public_key"], "b2c3aa11")
+        self.assertEqual(knoten["prefix"], "b2")
+        self.assertIn("a1", knoten["prefixes"])
+        self.assertIn("b2", knoten["prefixes"])
+
     def test_gleiches_prefix_zwei_repeater_bei_grosser_distanz(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
