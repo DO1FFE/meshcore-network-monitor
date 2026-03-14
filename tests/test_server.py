@@ -21,8 +21,13 @@ class TestAdvertServer(unittest.TestCase):
 
     def test_max_age_filter_parst_standardwert(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({})
-        self.assertEqual(stunden, 6)
-        self.assertIsNone(schalter)
+        self.assertIsNone(stunden)
+        self.assertEqual(schalter, "all")
+
+    def test_html_karte_hat_all_option_als_standard(self):
+        html_karte = self.modul.HTML_KARTE
+        self.assertIn('<option value=\"all\" selected>ALLE</option>', html_karte)
+        self.assertIn('<span id=\"aktiver-filter\">ALLE</span>', html_karte)
 
     def test_max_age_filter_parst_all_ueber_max_age(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})

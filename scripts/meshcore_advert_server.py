@@ -135,11 +135,11 @@ HTML_KARTE = """<!doctype html>
     <select id=\"zeitfilter-auswahl\" class=\"filter-auswahl\">
       <option value=\"1\">1 Stunde</option>
       <option value=\"3\">3 Stunden</option>
-      <option value=\"6\" selected>6 Stunden</option>
+      <option value=\"6\">6 Stunden</option>
       <option value=\"12\">12 Stunden</option>
       <option value=\"24\">24 Stunden</option>
       <option value=\"168\">7 Tage</option>
-      <option value=\"all\">ALLE</option>
+      <option value=\"all\" selected>ALLE</option>
     </select>
   </div>
   <div id=\"karte\"></div>
@@ -147,7 +147,7 @@ HTML_KARTE = """<!doctype html>
     Gesamtanzahl Repeater: <span id=\"gesamt-repeater\">0</span><br>
     Sichtbare Repeater: <span id=\"sichtbare-repeater\">0</span><br>
     Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span><br>
-    Filter: <span id=\"aktiver-filter\">letzte 6 Stunden</span>
+    Filter: <span id=\"aktiver-filter\">ALLE</span>
   </div>
   <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
@@ -265,7 +265,7 @@ def max_age_filter_aus_parametern(parameter: dict[str, list[str]]) -> tuple[int 
         raise ValueError(f"Ungültiger Wert für max_age: {max_age_wert!r}. Erlaubt: {ERLAUBTE_MAX_AGE_WERTE_TEXT}")
 
     if max_age_stunden_wert is None:
-        return 6, None
+        return None, "all"
 
     if max_age_stunden_wert == "all":
         return None, "all"
