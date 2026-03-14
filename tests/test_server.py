@@ -51,6 +51,15 @@ class TestAdvertServer(unittest.TestCase):
         self.assertNotEqual(index_sichtbar, -1)
         self.assertLess(index_gesamt, index_sichtbar)
 
+    def test_html_karte_enthaelt_download_link_fuer_windows_client(self):
+        html_karte = self.modul.HTML_KARTE
+        self.assertIn('class="download-link"', html_karte)
+        self.assertIn(
+            'href="https://github.com/DO1FFE/meshcore-network-monitor/releases/download/client-exe-latest/meshcore_companion_client.exe"',
+            html_karte,
+        )
+        self.assertIn('Client für Windows downloaden', html_karte)
+
     def test_prefix_aus_public_key_liefert_ersten_hex_prefix(self):
         self.assertEqual(self.modul.prefix_aus_public_key("a1b2c3d4"), "a1")
         self.assertEqual(self.modul.prefix_aus_public_key("ab"), "ab")
