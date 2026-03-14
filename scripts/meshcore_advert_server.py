@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 ERLAUBTE_MAX_AGE_STUNDEN = {1, 3, 6, 12, 24, 168}
 ERLAUBTE_MAX_AGE_WERTE_TEXT = ", ".join(str(wert) for wert in sorted(ERLAUBTE_MAX_AGE_STUNDEN)) + ", all"
+CLIENT_TIMEOUT = timedelta(minutes=10)
 
 HTML_KARTE = """<!doctype html>
 <html lang=\"de\">
@@ -126,6 +127,57 @@ HTML_KARTE = """<!doctype html>
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 0.8rem;
     }
+    .client-button {
+      margin-top: 6px;
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      background: #f8fafc;
+      padding: 4px 6px;
+      cursor: pointer;
+      font-size: 0.82rem;
+    }
+    .popup-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+    .popup-overlay.sichtbar {
+      display: flex;
+    }
+    .popup-inhalt {
+      width: min(360px, calc(100vw - 32px));
+      max-height: min(420px, calc(100vh - 32px));
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .popup-kopfzeile {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+    }
+    .popup-schliessen {
+      border: none;
+      background: transparent;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .client-liste {
+      margin: 0;
+      padding-left: 20px;
+      overflow: auto;
+      font-size: 0.85rem;
+    }
   </style>
 </head>
 <body>
@@ -143,11 +195,22 @@ HTML_KARTE = """<!doctype html>
     </select>
   </div>
   <div id=\"karte\"></div>
-  <div class=\"status-panel\" id=\"status-panel\">
-    Gesamtanzahl Repeater: <span id=\"gesamt-repeater\">0</span><br>
-    Sichtbare Repeater: <span id=\"sichtbare-repeater\">0</span><br>
-    Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span><br>
-    Filter: <span id=\"aktiver-filter\">ALLE</span>
+  <div class="status-panel" id="status-panel">
+    Gesamtanzahl Repeater: <span id="gesamt-repeater">0</span><br>
+    Sichtbare Repeater: <span id="sichtbare-repeater">0</span><br>
+    Letztes Datenpaket: <span id="letztes-datenpaket">-</span><br>
+    Filter: <span id="aktiver-filter">ALLE</span><br>
+    Verbundene Clients: <span id="anzahl-verbundene-clients">0</span>
+    <button id="verbundene-clients-button" class="client-button" type="button">Verbundene Clients</button>
+  </div>
+  <div id="verbundene-clients-popup" class="popup-overlay" aria-hidden="true">
+    <div class="popup-inhalt" role="dialog" aria-modal="true" aria-labelledby="verbundene-clients-titel">
+      <div class="popup-kopfzeile">
+        <span id="verbundene-clients-titel">Verbundene Clients</span>
+        <button id="verbundene-clients-schliessen" class="popup-schliessen" type="button" aria-label="Schließen">✕</button>
+      </div>
+      <ol id="verbundene-clients-liste" class="client-liste"></ol>
+    </div>
   </div>
   <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
@@ -161,6 +224,11 @@ HTML_KARTE = """<!doctype html>
     const letztesDatenpaketElement = document.getElementById('letztes-datenpaket');
     const aktiverFilterElement = document.getElementById('aktiver-filter');
     const zeitfilterAuswahlElement = document.getElementById('zeitfilter-auswahl');
+    const anzahlVerbundeneClientsElement = document.getElementById('anzahl-verbundene-clients');
+    const verbundeneClientsButtonElement = document.getElementById('verbundene-clients-button');
+    const verbundeneClientsPopupElement = document.getElementById('verbundene-clients-popup');
+    const verbundeneClientsSchliessenElement = document.getElementById('verbundene-clients-schliessen');
+    const verbundeneClientsListeElement = document.getElementById('verbundene-clients-liste');
     const markerKoordinaten = [];
     const filterBeschriftungen = {
       '1': 'letzte 1 Stunde',
@@ -184,6 +252,24 @@ HTML_KARTE = """<!doctype html>
       const grenzen = karte.getBounds();
       const anzahlSichtbar = markerKoordinaten.filter(koordinaten => grenzen.contains(koordinaten)).length;
       sichtbareRepeaterElement.textContent = String(anzahlSichtbar);
+    }
+
+    async function verbundeneClientsAktualisieren() {
+      const antwort = await fetch('/api/connected-clients');
+      const daten = await antwort.json();
+      const clients = Array.isArray(daten.clients) ? daten.clients : [];
+      anzahlVerbundeneClientsElement.textContent = String(clients.length);
+      verbundeneClientsListeElement.innerHTML = "";
+      for (const name of clients) {
+        const eintrag = document.createElement('li');
+        eintrag.textContent = String(name);
+        verbundeneClientsListeElement.appendChild(eintrag);
+      }
+      if (!clients.length) {
+        const eintrag = document.createElement('li');
+        eintrag.textContent = 'Keine verbundenen Clients';
+        verbundeneClientsListeElement.appendChild(eintrag);
+      }
     }
 
     async function aktualisieren() {
@@ -222,8 +308,27 @@ HTML_KARTE = """<!doctype html>
       }
 
       letztesDatenpaketElement.textContent = daten.last_packet_received || '-';
+      await verbundeneClientsAktualisieren();
       aktualisiereSichtbareRepeater();
     }
+
+    function popupSchliessen() {
+      verbundeneClientsPopupElement.classList.remove('sichtbar');
+      verbundeneClientsPopupElement.setAttribute('aria-hidden', 'true');
+    }
+
+    function popupOeffnen() {
+      verbundeneClientsPopupElement.classList.add('sichtbar');
+      verbundeneClientsPopupElement.setAttribute('aria-hidden', 'false');
+    }
+
+    verbundeneClientsButtonElement.addEventListener('click', popupOeffnen);
+    verbundeneClientsSchliessenElement.addEventListener('click', popupSchliessen);
+    verbundeneClientsPopupElement.addEventListener('click', event => {
+      if (event.target === verbundeneClientsPopupElement) {
+        popupSchliessen();
+      }
+    });
 
     karte.on('moveend zoomend resize', aktualisiereSichtbareRepeater);
     zeitfilterAuswahlElement.addEventListener('change', () => {
@@ -909,6 +1014,28 @@ class Datenbank:
 class Handler(BaseHTTPRequestHandler):
     datenbank: Datenbank
     unbenutzte_prefix_datei: Path
+    verbundene_clients: dict[str, datetime] = {}
+    verbundene_clients_lock = threading.Lock()
+
+    @classmethod
+    def _bereinige_und_liste_verbundene_clients(cls, jetzt: datetime | None = None) -> list[str]:
+        zeitpunkt = jetzt or datetime.now(timezone.utc)
+        grenze = zeitpunkt - CLIENT_TIMEOUT
+        with cls.verbundene_clients_lock:
+            abgelaufene = [name for name, last_seen in cls.verbundene_clients.items() if last_seen < grenze]
+            for name in abgelaufene:
+                cls.verbundene_clients.pop(name, None)
+            return sorted(cls.verbundene_clients.keys())
+
+    @classmethod
+    def client_aktivitaet_markieren(cls, client_name: str, jetzt: datetime | None = None) -> None:
+        name = (client_name or "").strip()
+        if not name:
+            return
+        zeitpunkt = jetzt or datetime.now(timezone.utc)
+        with cls.verbundene_clients_lock:
+            cls.verbundene_clients[name] = zeitpunkt
+        cls._bereinige_und_liste_verbundene_clients(zeitpunkt)
 
     def _json_antwort(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         roh = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -948,6 +1075,11 @@ class Handler(BaseHTTPRequestHandler):
             self._json_antwort(HTTPStatus.OK, {"prefixes": lese_unbenutzte_prefixe(self.unbenutzte_prefix_datei)})
             return
 
+        if pfad == "/api/connected-clients":
+            clients = self._bereinige_und_liste_verbundene_clients()
+            self._json_antwort(HTTPStatus.OK, {"clients": clients, "count": len(clients)})
+            return
+
         self._json_antwort(HTTPStatus.NOT_FOUND, {"fehler": "nicht gefunden"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -973,6 +1105,10 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": str(exc)})
             return
+
+        client_name = payload.get("client_name")
+        if isinstance(client_name, str):
+            self.client_aktivitaet_markieren(client_name)
 
         self._json_antwort(HTTPStatus.ACCEPTED, {"status": "ok"})
 

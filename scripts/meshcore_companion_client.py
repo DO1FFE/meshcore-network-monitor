@@ -42,6 +42,7 @@ class CliOptionen:
     ausgabe_pfad: Path
     pin: str | None
     server_url: str | None
+    client_name: str
     ble_retry_einmal: bool = True
 
 
@@ -53,6 +54,7 @@ STANDARD_KONFIGURATION = {
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
     "server_url": "https://mesh.do1ffe.de",
+    "client_name": "meshcore-client",
     "ble_retry_einmal": True,
 }
 
@@ -320,6 +322,18 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
     print("==========================\n")
 
 
+
+def client_name_aus_meshcore_geraet(client: MeshCore, fallback_name: str | None = None) -> str:
+    """Liest den Client-Namen bevorzugt aus den Geräteinformationen des MeshCore-Knotens."""
+    self_info = client.self_info if isinstance(client.self_info, dict) else {}
+    name = str(self_info.get("name", "")).strip()
+    if name:
+        return name
+    if fallback_name and str(fallback_name).strip():
+        return str(fallback_name).strip()
+    return "meshcore-client"
+
+
 def ist_advert(log_daten: dict[str, Any]) -> bool:
     """Prüft, ob ein RX-Log-Eintrag ein ADVERT ist."""
     return ermittle_payload_typename(log_daten) == "ADVERT"
@@ -491,7 +505,7 @@ def kompakte_server_info(log_daten: dict[str, Any]) -> str:
     return " | ".join(teile)
 
 
-def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
+def event_an_server_senden(server_url: str, log_daten: dict[str, Any], client_name: str) -> None:
     """Sendet ADVERT/PATH-Ereignisse per HTTP POST an den Server."""
     ziel = server_api_events_url(server_url)
     payload_typename = ermittle_payload_typename(log_daten)
@@ -502,6 +516,7 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any]) -> None:
     path_daten = extrahiere_path(log_daten)
     if path_daten is not None:
         server_payload["path"] = path_daten
+    server_payload["client_name"] = client_name
 
     roh = json.dumps(json_sicherer_wert(server_payload), ensure_ascii=False).encode("utf-8")
     req = request.Request(ziel, data=roh, headers={"Content-Type": "application/json"}, method="POST")
@@ -573,13 +588,18 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
-async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | None = None) -> None:
+async def rx_log_modus(
+    client: MeshCore,
+    ausgabe_pfad: Path,
+    server_url: str | None = None,
+    client_name: str | None = None,
+) -> None:
     """Kontinuierlicher RX-Log-Modus mit Persistierung von REPEATER-ADVERTs."""
     uebertragungs_tasks: set[asyncio.Task[None]] = set()
 
     async def _event_asynchron_an_server_senden(log_daten: dict[str, Any]) -> None:
         try:
-            await asyncio.to_thread(event_an_server_senden, server_url, log_daten)
+            await asyncio.to_thread(event_an_server_senden, server_url, log_daten, client_name)
             print(f"[INFO] An Server übertragen: {kompakte_server_info(log_daten)}")
         except Exception as exc:
             print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
@@ -593,7 +613,10 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, server_url: str | N
         log_daten = event.payload if isinstance(event.payload, dict) else {}
 
         if server_url and soll_an_server_gesendet_werden(log_daten):
-            _uebertragung_task_registrieren(log_daten)
+            if not client_name:
+                print("[WARNUNG] Kein Client-Name gesetzt, Event wird nicht an den Server übertragen.")
+            else:
+                _uebertragung_task_registrieren(log_daten)
 
         paket = {
             "zeit": datetime.now(timezone.utc).isoformat(),
@@ -682,6 +705,9 @@ def optionen_aus_argumenten_und_konfiguration(
     ausgabe_datei = args.ausgabe_datei if args.ausgabe_datei is not None else konfiguration.get("ausgabe_datei")
     pin = args.pin if args.pin is not None else konfiguration.get("pin")
     server_url = args.server_url if args.server_url is not None else konfiguration.get("server_url")
+    client_name = args.client_name if args.client_name is not None else konfiguration.get("client_name")
+    if not client_name:
+        client_name = "meshcore-client"
     ble_retry_einmal = bool(konfiguration.get("ble_retry_einmal", True))
 
     return CliOptionen(
@@ -692,6 +718,7 @@ def optionen_aus_argumenten_und_konfiguration(
         ausgabe_pfad=Path(ausgabe_datei),
         pin=pin,
         server_url=server_url,
+        client_name=str(client_name),
         ble_retry_einmal=ble_retry_einmal,
     )
 
@@ -737,6 +764,11 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
         help="Basis-URL des ADVERT/PATH-Servers, z. B. https://mesh.do1ffe.de",
     )
     parser.add_argument(
+        "--client-name",
+        default=None,
+        help="Name dieses Clients für die Anzeige verbundener Clients am Server",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path("meshcore_client_config.json"),
@@ -766,7 +798,9 @@ async def async_hauptprogramm() -> int:
         client = await meshcore_verbinden(optionen)
         await authentifizieren(client, optionen.pin)
         await geraeteinformationen_ausgeben(client)
-        await rx_log_modus(client, optionen.ausgabe_pfad, optionen.server_url)
+        client_name = client_name_aus_meshcore_geraet(client, optionen.client_name)
+        print(f"[INFO] Client-Name für Serverübertragung: {client_name}")
+        await rx_log_modus(client, optionen.ausgabe_pfad, optionen.server_url, client_name)
         return 0
     except Verbindungsfehler as exc:
         print(f"[FEHLER] {exc}")
