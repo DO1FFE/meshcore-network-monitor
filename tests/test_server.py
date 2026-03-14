@@ -724,5 +724,40 @@ class TestAdvertServer(unittest.TestCase):
         self.assertEqual(daten["edges"], [])
 
 
+class TestVerbundeneClients(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_advert_server" not in globals():
+            spec = importlib.util.spec_from_file_location(
+                "meshcore_advert_server", "scripts/meshcore_advert_server.py"
+            )
+            module = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
+            cls.modul = module
+        else:
+            cls.modul = meshcore_advert_server
+
+    def setUp(self):
+        self.modul.Handler.verbundene_clients = {}
+
+    def test_client_aktivitaet_markieren_uebernimmt_namen(self):
+        jetzt = self.modul.datetime(2026, 1, 1, tzinfo=self.modul.timezone.utc)
+        self.modul.Handler.client_aktivitaet_markieren("client-a", jetzt=jetzt)
+
+        clients = self.modul.Handler._bereinige_und_liste_verbundene_clients(jetzt=jetzt)
+        self.assertEqual(clients, ["client-a"])
+
+    def test_bereinigung_entfernt_clients_nach_mehr_als_10_minuten(self):
+        start = self.modul.datetime(2026, 1, 1, tzinfo=self.modul.timezone.utc)
+        self.modul.Handler.client_aktivitaet_markieren("client-alt", jetzt=start)
+
+        spaeter = start + self.modul.timedelta(minutes=11)
+        clients = self.modul.Handler._bereinige_und_liste_verbundene_clients(jetzt=spaeter)
+
+        self.assertEqual(clients, [])
+
+
+
 if __name__ == "__main__":
     unittest.main()

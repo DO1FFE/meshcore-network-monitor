@@ -43,6 +43,8 @@ class TestKonfiguration(unittest.TestCase):
         self.assertIsNone(optionen.com_port)
         self.assertTrue(optionen.ble_scan)
         self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
+        self.assertTrue(isinstance(optionen.client_name, str))
+        self.assertTrue(len(optionen.client_name) > 0)
 
     def test_konfiguration_com_port_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -56,6 +58,7 @@ class TestKonfiguration(unittest.TestCase):
                         "timeout": 3,
                         "ausgabe_datei": "out.jsonl",
                         "server_url": "https://mesh.do1ffe.de",
+                        "client_name": "client-a",
                     }
                 ),
                 encoding="utf-8",
@@ -68,6 +71,7 @@ class TestKonfiguration(unittest.TestCase):
         self.assertEqual(optionen.timeout, 3.0)
         self.assertEqual(str(optionen.ausgabe_pfad), "out.jsonl")
         self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
+        self.assertEqual(optionen.client_name, "client-a")
 
     def test_cli_ueberschreibt_konfiguration(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -103,6 +107,17 @@ class TestKonfiguration(unittest.TestCase):
             ])
 
         self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
+
+    def test_cli_client_name_ueberschreibt_konfiguration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pfad = Path(tmp) / "config.json"
+            pfad.write_text(json.dumps({"client_name": "alt-client"}), encoding="utf-8")
+            optionen = self.modul.argumente_einlesen([
+                "--config", str(pfad), "--client-name", "neu-client"
+            ])
+
+        self.assertEqual(optionen.client_name, "neu-client")
+
 
 class TestAdvertSerialisierung(unittest.TestCase):
     @classmethod
@@ -275,6 +290,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
             server_url=None,
+            client_name="test-client",
         )
         geraet = SimpleNamespace(address="AA:BB:CC:DD:EE:FF")
         erwarteter_client = object()
@@ -298,6 +314,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             ausgabe_pfad=Path("out.jsonl"),
             pin=None,
             server_url=None,
+            client_name="test-client",
         )
         geraet = SimpleNamespace(address="11:22:33:44:55:66")
         erwarteter_client = object()
@@ -330,6 +347,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
             server_url=None,
+            client_name="test-client",
             ble_retry_einmal=True,
         )
         geraet = SimpleNamespace(address="AA:00:BB:11:CC:22")
@@ -354,6 +372,7 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             ausgabe_pfad=Path("out.jsonl"),
             pin="123456",
             server_url=None,
+            client_name="test-client",
             ble_retry_einmal=True,
         )
         geraet = SimpleNamespace(address="FF:EE:DD:CC:BB:AA")
@@ -486,6 +505,21 @@ class TestGeraeteinformationen(unittest.IsolatedAsyncioTestCase):
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertIn("Akkustand : 100%", ausgaben)
 
+    def test_client_name_aus_meshcore_geraet_nimmt_geraetename(self):
+        client = SimpleNamespace(self_info={"name": "MeshNode-01"})
+
+        name = self.modul.client_name_aus_meshcore_geraet(client, "fallback-client")
+
+        self.assertEqual(name, "MeshNode-01")
+
+    def test_client_name_aus_meshcore_geraet_verwendet_fallback_ohne_name(self):
+        client = SimpleNamespace(self_info={})
+
+        name = self.modul.client_name_aus_meshcore_geraet(client, "fallback-client")
+
+        self.assertEqual(name, "fallback-client")
+
+
 
 class TestAdvertPersistierung(unittest.TestCase):
     @classmethod
@@ -615,7 +649,7 @@ class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)), patch.object(
             self.modul.asyncio, "to_thread", AsyncMock(return_value=None)
         ), patch.object(self.modul, "advert_persistieren"), patch("builtins.print") as print_mock:
-            await self.modul.rx_log_modus(client, Path("out.jsonl"), "https://server.example")
+            await self.modul.rx_log_modus(client, Path("out.jsonl"), "https://server.example", "client-a")
 
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertTrue(
@@ -675,11 +709,12 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
             "urlopen",
         ) as urlopen_mock, patch("builtins.print") as print_mock:
             urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
-            self.modul.event_an_server_senden("https://server.example", log_daten)
+            self.modul.event_an_server_senden("https://server.example", log_daten, "client-a")
 
         _, kwargs = request_mock.call_args
         payload = json.loads(kwargs["data"].decode("utf-8"))
         self.assertEqual(payload["payload_typename"], "PATH")
+        self.assertEqual(payload["client_name"], "client-a")
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertIn("[INFO] Serverantwort HTTP 202 für Event-Typ PATH.", ausgaben)
 
@@ -692,7 +727,7 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
             "urlopen",
         ) as urlopen_mock:
             urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
-            self.modul.event_an_server_senden("https://server.example", log_daten)
+            self.modul.event_an_server_senden("https://server.example", log_daten, "client-a")
 
         _, kwargs = request_mock.call_args
         payload = json.loads(kwargs["data"].decode("utf-8"))
@@ -721,7 +756,7 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
             "urlopen",
         ) as urlopen_mock:
             urlopen_mock.return_value.__enter__.return_value = SimpleNamespace(status=202)
-            self.modul.event_an_server_senden("https://server.example/api/events", log_daten)
+            self.modul.event_an_server_senden("https://server.example/api/events", log_daten, "client-a")
 
         args, _ = request_mock.call_args
         self.assertEqual(args[0], "https://server.example/api/events")
