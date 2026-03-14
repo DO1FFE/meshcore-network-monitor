@@ -316,7 +316,6 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
         self.assertIs(client, erwarteter_client)
         create_ble_mock.assert_awaited_once_with(
             address="AA:BB:CC:DD:EE:FF",
-            device=geraet,
             pin="123456",
             default_timeout=5.0,
         )
@@ -352,15 +351,51 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
             erster_aufruf.kwargs,
             {
                 "address": "11:22:33:44:55:66",
-                "device": geraet,
                 "pin": None,
                 "default_timeout": 7.0,
             },
         )
-        self.assertEqual(zweiter_aufruf.args, ())
+        self.assertEqual(zweiter_aufruf.args, ("11:22:33:44:55:66",))
         self.assertEqual(
             zweiter_aufruf.kwargs,
-            {"address": "11:22:33:44:55:66", "pin": None, "default_timeout": 7.0},
+            {"pin": None, "default_timeout": 7.0},
+        )
+
+    async def test_ble_fallback_verwendet_device_parameter_als_dritten_versuch(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=7.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin="123456",
+            server_url=None,
+            client_name="test-client",
+        )
+        geraet = SimpleNamespace(address="12:34:56:78:90:AB")
+        erwarteter_client = object()
+
+        create_ble_mock = AsyncMock(
+            side_effect=[TypeError("kw-only unsupported"), TypeError("positional unsupported"), erwarteter_client]
+        )
+
+        with patch.object(self.modul, "ble_geraet_interaktiv_auswaehlen", AsyncMock(return_value=geraet)), patch.object(
+            self.modul.MeshCore, "create_ble", create_ble_mock, create=True
+        ):
+            client = await self.modul.meshcore_verbinden(optionen)
+
+        self.assertIs(client, erwarteter_client)
+        self.assertEqual(create_ble_mock.await_count, 3)
+        dritter_aufruf = create_ble_mock.await_args_list[2]
+        self.assertEqual(dritter_aufruf.args, ())
+        self.assertEqual(
+            dritter_aufruf.kwargs,
+            {
+                "address": "12:34:56:78:90:AB",
+                "device": geraet,
+                "pin": "123456",
+                "default_timeout": 7.0,
+            },
         )
     async def test_ble_retry_einmal_erster_versuch_fehlt_zweiter_erfolgreich(self):
         optionen = self.modul.CliOptionen(
