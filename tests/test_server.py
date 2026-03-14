@@ -18,6 +18,25 @@ class TestAdvertServer(unittest.TestCase):
         cls.modul = module
 
 
+
+    def test_max_age_filter_parst_standardwert(self):
+        stunden, schalter = self.modul.max_age_filter_aus_parametern({})
+        self.assertEqual(stunden, 6)
+        self.assertIsNone(schalter)
+
+    def test_max_age_filter_parst_all_ueber_max_age(self):
+        stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})
+        self.assertIsNone(stunden)
+        self.assertEqual(schalter, "all")
+
+    def test_max_age_filter_lehnt_ungueltige_werte_ab(self):
+        with self.assertRaises(ValueError):
+            self.modul.max_age_filter_aus_parametern({"max_age_hours": ["5"]})
+        with self.assertRaises(ValueError):
+            self.modul.max_age_filter_aus_parametern({"max_age": ["1"]})
+        with self.assertRaises(ValueError):
+            self.modul.max_age_filter_aus_parametern({"max_age_hours": ["all"] , "max_age": ["all"]})
+
     def test_html_karte_enthaelt_gesamt_repeater_vor_sichtbare_repeater(self):
         html_karte = self.modul.HTML_KARTE
         index_gesamt = html_karte.find('id=\"gesamt-repeater\"')
@@ -605,6 +624,15 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(daten["edges"], [])
 
+
+    def test_map_daten_liefert_applied_filter_hours(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event({"payload_typename": "ADVERT", "adv_name": "R", "adv_key": "a1b2ff00"})
+            daten = db.map_daten(max_age_stunden=6)
+
+        self.assertEqual(daten["applied_filter_hours"], 6)
+
     def test_map_daten_enthaelt_zeitpunkt_letztes_datenpaket(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
@@ -632,6 +660,63 @@ class TestAdvertServer(unittest.TestCase):
                 }
             )
             json.dumps(db.map_daten(), ensure_ascii=False)
+
+
+    def test_map_daten_zeitfilter_schliesst_ungueltige_last_seen_aus(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Aktiv",
+                    "adv_key": "a1b2ff00",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.verbindung.execute("UPDATE repeaters SET last_seen = ? WHERE name = ?", ("ungueltig", "Aktiv"))
+            db.verbindung.commit()
+
+            daten_gefiltert = db.map_daten(max_age_stunden=6)
+            daten_alle = db.map_daten(max_age_stunden=None)
+
+        self.assertEqual(daten_gefiltert["nodes"], [])
+        self.assertEqual(len(daten_alle["nodes"]), 1)
+
+    def test_map_daten_zeitfilter_verwirft_kanten_zu_alten_knoten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Neu-A",
+                    "adv_key": "1111aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                    "path": "2222",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "Alt-B",
+                    "adv_key": "2222bbbb",
+                    "adv_lat": 50.09,
+                    "adv_lon": 8.0,
+                    "path": "1111",
+                }
+            )
+            db.verbindung.execute(
+                "UPDATE repeaters SET last_seen = datetime('now', '-2 days') WHERE name = ?",
+                ("Alt-B",),
+            )
+            db.verbindung.commit()
+
+            daten = db.map_daten(max_age_stunden=6)
+
+        namen = {eintrag["name"] for eintrag in daten["nodes"]}
+        self.assertEqual(namen, {"Neu-A"})
+        self.assertEqual(daten["edges"], [])
 
 
 if __name__ == "__main__":

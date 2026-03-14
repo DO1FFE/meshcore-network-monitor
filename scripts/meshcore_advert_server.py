@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+ERLAUBTE_MAX_AGE_STUNDEN = {1, 3, 6, 12, 24, 168}
+ERLAUBTE_MAX_AGE_WERTE_TEXT = ", ".join(str(wert) for wert in sorted(ERLAUBTE_MAX_AGE_STUNDEN)) + ", all"
+
 HTML_KARTE = """<!doctype html>
 <html lang=\"de\">
 <head>
@@ -236,6 +239,48 @@ HTML_KARTE = """<!doctype html>
 
 def zeitstempel_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def zeitstempel_nach_utc(zeit_text: str | None) -> datetime | None:
+    if not zeit_text or not isinstance(zeit_text, str):
+        return None
+    try:
+        zeitpunkt = datetime.fromisoformat(zeit_text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if zeitpunkt.tzinfo is None:
+        return zeitpunkt.replace(tzinfo=timezone.utc)
+    return zeitpunkt.astimezone(timezone.utc)
+
+
+def max_age_filter_aus_parametern(parameter: dict[str, list[str]]) -> tuple[int | None, str | None]:
+    max_age_wert = parameter.get("max_age", [None])[0]
+    max_age_stunden_wert = parameter.get("max_age_hours", [None])[0]
+    if max_age_wert is not None and max_age_stunden_wert is not None:
+        raise ValueError("Bitte nur einen der Parameter max_age oder max_age_hours angeben")
+
+    if max_age_wert is not None:
+        if max_age_wert == "all":
+            return None, "all"
+        raise ValueError(f"Ungültiger Wert für max_age: {max_age_wert!r}. Erlaubt: {ERLAUBTE_MAX_AGE_WERTE_TEXT}")
+
+    if max_age_stunden_wert is None:
+        return 6, None
+
+    if max_age_stunden_wert == "all":
+        return None, "all"
+
+    if not max_age_stunden_wert.isdigit():
+        raise ValueError(
+            f"Ungültiger Wert für max_age_hours: {max_age_stunden_wert!r}. Erlaubt: {ERLAUBTE_MAX_AGE_WERTE_TEXT}"
+        )
+
+    max_age_stunden = int(max_age_stunden_wert)
+    if max_age_stunden not in ERLAUBTE_MAX_AGE_STUNDEN:
+        raise ValueError(
+            f"Ungültiger Wert für max_age_hours: {max_age_stunden_wert!r}. Erlaubt: {ERLAUBTE_MAX_AGE_WERTE_TEXT}"
+        )
+    return max_age_stunden, None
 
 
 def prefix_aus_public_key(public_key: str | None) -> str | None:
@@ -694,21 +739,18 @@ class Datenbank:
                 )
             self.verbindung.commit()
 
-    def map_daten(self, max_age_stunden: float | None = None) -> dict[str, Any]:
+    def map_daten(self, max_age_stunden: int | None = None) -> dict[str, Any]:
+        utc_jetzt = datetime.now(timezone.utc)
+        zeitgrenze_dt: datetime | None = None
         zeitgrenze: str | None = None
         if max_age_stunden is not None:
-            zeitgrenze = (datetime.now(timezone.utc) - timedelta(hours=max_age_stunden)).isoformat()
+            zeitgrenze_dt = utc_jetzt - timedelta(hours=max_age_stunden)
+            zeitgrenze = zeitgrenze_dt.isoformat()
 
         with self._sperre:
             nodes = []
-            parameter: tuple[str, ...] = ()
-            where_klausel = ""
-            if zeitgrenze:
-                where_klausel = "WHERE r.last_seen >= ?"
-                parameter = (zeitgrenze,)
-
             for zeile in self.verbindung.execute(
-                f"""
+                """
                 SELECT
                     r.id,
                     r.name,
@@ -719,12 +761,14 @@ class Datenbank:
                     GROUP_CONCAT(a.prefix) AS prefixes
                 FROM repeaters r
                 LEFT JOIN repeater_aliases a ON a.repeater_id = r.id
-                {where_klausel}
                 GROUP BY r.id
                 ORDER BY r.id
                 """,
-                parameter,
             ):
+                zeitpunkt_last_seen = zeitstempel_nach_utc(zeile["last_seen"])
+                if zeitgrenze_dt is not None:
+                    if zeitpunkt_last_seen is None or zeitpunkt_last_seen < zeitgrenze_dt:
+                        continue
                 prefixes = [prefix for prefix in (zeile["prefixes"] or "").split(",") if prefix]
                 aktueller_prefix = prefix_aus_public_key(zeile["public_key"])
                 nodes.append(
@@ -736,24 +780,16 @@ class Datenbank:
                         "public_key": zeile["public_key"],
                         "latitude": zeile["latitude"],
                         "longitude": zeile["longitude"],
-                        "last_seen": zeile["last_seen"],
+                        "last_seen": zeitpunkt_last_seen.isoformat() if zeitpunkt_last_seen else zeile["last_seen"],
                     }
                 )
 
+            erlaubte_repeater_ids = {knoten["id"] for knoten in nodes}
+
             alias_map: dict[str, list[int]] = {}
-            alias_abfrage = "SELECT repeater_id, prefix FROM repeater_aliases"
-            alias_parameter: tuple[str, ...] = ()
-            if zeitgrenze:
-                alias_abfrage = (
-                    """
-                    SELECT a.repeater_id, a.prefix
-                    FROM repeater_aliases a
-                    JOIN repeaters r ON r.id = a.repeater_id
-                    WHERE r.last_seen >= ?
-                    """
-                )
-                alias_parameter = (zeitgrenze,)
-            for zeile in self.verbindung.execute(alias_abfrage, alias_parameter):
+            for zeile in self.verbindung.execute("SELECT repeater_id, prefix FROM repeater_aliases"):
+                if zeile["repeater_id"] not in erlaubte_repeater_ids:
+                    continue
                 alias_map.setdefault(zeile["prefix"], []).append(zeile["repeater_id"])
 
             repeater_positionen: dict[int, tuple[float, float]] = {}
@@ -866,6 +902,7 @@ class Datenbank:
             "nodes": nodes,
             "edges": [{"von_id": a, "nach_id": b} for a, b in sorted(edges)],
             "last_packet_received": letztes_datenpaket,
+            "applied_filter_hours": max_age_stunden,
         }
 
 
@@ -895,23 +932,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if pfad == "/api/map-data":
-            max_age_stunden: float | None = 6.0
-            max_age_wert = parameter.get("max_age", [None])[0]
-            if max_age_wert == "all":
-                max_age_stunden = None
-            else:
-                max_age_hours_wert = parameter.get("max_age_hours", [None])[0]
-                if max_age_hours_wert is not None:
-                    try:
-                        max_age_stunden = float(max_age_hours_wert)
-                    except ValueError:
-                        self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "Ungültiger Parameter max_age_hours"})
-                        return
-                    if max_age_stunden <= 0:
-                        self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "max_age_hours muss größer als 0 sein"})
-                        return
+            try:
+                max_age_stunden, max_age_schalter = max_age_filter_aus_parametern(parameter)
+            except ValueError as exc:
+                self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": str(exc)})
+                return
 
-            self._json_antwort(HTTPStatus.OK, self.datenbank.map_daten(max_age_stunden=max_age_stunden))
+            antwort = self.datenbank.map_daten(max_age_stunden=max_age_stunden)
+            if max_age_schalter == "all":
+                antwort["applied_filter_hours"] = "all"
+            self._json_antwort(HTTPStatus.OK, antwort)
             return
 
         if pfad == "/api/unused-prefixes":
