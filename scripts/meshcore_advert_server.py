@@ -13,12 +13,12 @@ import re
 import sqlite3
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 HTML_KARTE = """<!doctype html>
 <html lang=\"de\">
@@ -67,6 +67,32 @@ HTML_KARTE = """<!doctype html>
       line-height: 1.4;
       min-width: 240px;
     }
+    .filter-panel {
+      position: absolute;
+      z-index: 1000;
+      top: 12px;
+      right: 12px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 0.85rem;
+      min-width: 180px;
+    }
+    .filter-panel label {
+      display: block;
+      margin-bottom: 4px;
+      font-weight: 600;
+    }
+    .filter-auswahl {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 4px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      background: #fff;
+    }
     .prefix-marker-container {
       background: transparent;
       border: none;
@@ -101,11 +127,24 @@ HTML_KARTE = """<!doctype html>
 </head>
 <body>
   <div class=\"titel-panel\">MeshCore Repeater Live-Karte</div>
+  <div class=\"filter-panel\">
+    <label for=\"zeitfilter-auswahl\">Zeitraum</label>
+    <select id=\"zeitfilter-auswahl\" class=\"filter-auswahl\">
+      <option value=\"1\">1 Stunde</option>
+      <option value=\"3\">3 Stunden</option>
+      <option value=\"6\" selected>6 Stunden</option>
+      <option value=\"12\">12 Stunden</option>
+      <option value=\"24\">24 Stunden</option>
+      <option value=\"168\">7 Tage</option>
+      <option value=\"all\">ALLE</option>
+    </select>
+  </div>
   <div id=\"karte\"></div>
   <div class=\"status-panel\" id=\"status-panel\">
     Gesamtanzahl Repeater: <span id=\"gesamt-repeater\">0</span><br>
     Sichtbare Repeater: <span id=\"sichtbare-repeater\">0</span><br>
-    Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span>
+    Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span><br>
+    Filter: <span id=\"aktiver-filter\">letzte 6 Stunden</span>
   </div>
   <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
@@ -117,7 +156,26 @@ HTML_KARTE = """<!doctype html>
     const gesamtRepeaterElement = document.getElementById('gesamt-repeater');
     const sichtbareRepeaterElement = document.getElementById('sichtbare-repeater');
     const letztesDatenpaketElement = document.getElementById('letztes-datenpaket');
+    const aktiverFilterElement = document.getElementById('aktiver-filter');
+    const zeitfilterAuswahlElement = document.getElementById('zeitfilter-auswahl');
     const markerKoordinaten = [];
+    const filterBeschriftungen = {
+      '1': 'letzte 1 Stunde',
+      '3': 'letzte 3 Stunden',
+      '6': 'letzte 6 Stunden',
+      '12': 'letzte 12 Stunden',
+      '24': 'letzte 24 Stunden',
+      '168': 'letzte 7 Tage',
+      'all': 'ALLE'
+    };
+
+    function mapDataUrl() {
+      const wert = zeitfilterAuswahlElement.value;
+      if (wert === 'all') {
+        return '/api/map-data?max_age=all';
+      }
+      return `/api/map-data?max_age_hours=${encodeURIComponent(wert)}`;
+    }
 
     function aktualisiereSichtbareRepeater() {
       const grenzen = karte.getBounds();
@@ -126,9 +184,10 @@ HTML_KARTE = """<!doctype html>
     }
 
     async function aktualisieren() {
-      const antwort = await fetch('/api/map-data');
+      const antwort = await fetch(mapDataUrl());
       const daten = await antwort.json();
       gesamtRepeaterElement.textContent = String(Array.isArray(daten.nodes) ? daten.nodes.length : 0);
+      aktiverFilterElement.textContent = filterBeschriftungen[zeitfilterAuswahlElement.value] || 'unbekannt';
       markerEbene.clearLayers();
       linienEbene.clearLayers();
       markerKoordinaten.length = 0;
@@ -164,6 +223,9 @@ HTML_KARTE = """<!doctype html>
     }
 
     karte.on('moveend zoomend resize', aktualisiereSichtbareRepeater);
+    zeitfilterAuswahlElement.addEventListener('change', () => {
+      aktualisieren();
+    });
     aktualisieren();
     setInterval(aktualisieren, 5000);
   </script>
@@ -632,11 +694,21 @@ class Datenbank:
                 )
             self.verbindung.commit()
 
-    def map_daten(self) -> dict[str, Any]:
+    def map_daten(self, max_age_stunden: float | None = None) -> dict[str, Any]:
+        zeitgrenze: str | None = None
+        if max_age_stunden is not None:
+            zeitgrenze = (datetime.now(timezone.utc) - timedelta(hours=max_age_stunden)).isoformat()
+
         with self._sperre:
             nodes = []
+            parameter: tuple[str, ...] = ()
+            where_klausel = ""
+            if zeitgrenze:
+                where_klausel = "WHERE r.last_seen >= ?"
+                parameter = (zeitgrenze,)
+
             for zeile in self.verbindung.execute(
-                """
+                f"""
                 SELECT
                     r.id,
                     r.name,
@@ -647,9 +719,11 @@ class Datenbank:
                     GROUP_CONCAT(a.prefix) AS prefixes
                 FROM repeaters r
                 LEFT JOIN repeater_aliases a ON a.repeater_id = r.id
+                {where_klausel}
                 GROUP BY r.id
                 ORDER BY r.id
-                """
+                """,
+                parameter,
             ):
                 prefixes = [prefix for prefix in (zeile["prefixes"] or "").split(",") if prefix]
                 aktueller_prefix = prefix_aus_public_key(zeile["public_key"])
@@ -667,7 +741,19 @@ class Datenbank:
                 )
 
             alias_map: dict[str, list[int]] = {}
-            for zeile in self.verbindung.execute("SELECT repeater_id, prefix FROM repeater_aliases"):
+            alias_abfrage = "SELECT repeater_id, prefix FROM repeater_aliases"
+            alias_parameter: tuple[str, ...] = ()
+            if zeitgrenze:
+                alias_abfrage = (
+                    """
+                    SELECT a.repeater_id, a.prefix
+                    FROM repeater_aliases a
+                    JOIN repeaters r ON r.id = a.repeater_id
+                    WHERE r.last_seen >= ?
+                    """
+                )
+                alias_parameter = (zeitgrenze,)
+            for zeile in self.verbindung.execute(alias_abfrage, alias_parameter):
                 alias_map.setdefault(zeile["prefix"], []).append(zeile["repeater_id"])
 
             repeater_positionen: dict[int, tuple[float, float]] = {}
@@ -728,7 +814,12 @@ class Datenbank:
                     vorherige_id = kandidat
                 return ids
 
-            for zeile in self.verbindung.execute("SELECT source_prefix, path FROM paths"):
+            pfad_abfrage = "SELECT source_prefix, path FROM paths"
+            pfad_parameter: tuple[str, ...] = ()
+            if zeitgrenze:
+                pfad_abfrage += " WHERE received_at >= ?"
+                pfad_parameter = (zeitgrenze,)
+            for zeile in self.verbindung.execute(pfad_abfrage, pfad_parameter):
                 segmente = pfadsegmente(zeile["path"])
                 start_id = None
                 if zeile["source_prefix"]:
@@ -737,9 +828,12 @@ class Datenbank:
                 for a, b in zip(ids, ids[1:]):
                     kante_hinzufuegen(a, b)
 
-            for zeile in self.verbindung.execute(
-                "SELECT repeater_id, prefix, path FROM adverts WHERE path IS NOT NULL"
-            ):
+            advert_abfrage = "SELECT repeater_id, prefix, path FROM adverts WHERE path IS NOT NULL"
+            advert_parameter: tuple[str, ...] = ()
+            if zeitgrenze:
+                advert_abfrage += " AND received_at >= ?"
+                advert_parameter = (zeitgrenze,)
+            for zeile in self.verbindung.execute(advert_abfrage, advert_parameter):
                 segmente = pfadsegmente(zeile["path"])
                 if zeile["repeater_id"]:
                     ids = aufgeloeste_ids(segmente, zeile["repeater_id"])
@@ -757,8 +851,15 @@ class Datenbank:
                     continue
                 edges.add(tuple(sorted((von_id, nach_id))))
 
-            letztes_advert = self.verbindung.execute("SELECT MAX(received_at) FROM adverts").fetchone()[0]
-            letztes_path = self.verbindung.execute("SELECT MAX(received_at) FROM paths").fetchone()[0]
+            letztes_advert_abfrage = "SELECT MAX(received_at) FROM adverts"
+            letztes_path_abfrage = "SELECT MAX(received_at) FROM paths"
+            letzte_parameter: tuple[str, ...] = ()
+            if zeitgrenze:
+                letztes_advert_abfrage += " WHERE received_at >= ?"
+                letztes_path_abfrage += " WHERE received_at >= ?"
+                letzte_parameter = (zeitgrenze,)
+            letztes_advert = self.verbindung.execute(letztes_advert_abfrage, letzte_parameter).fetchone()[0]
+            letztes_path = self.verbindung.execute(letztes_path_abfrage, letzte_parameter).fetchone()[0]
             letztes_datenpaket = max([zeit for zeit in (letztes_advert, letztes_path) if zeit], default=None)
 
         return {
@@ -781,7 +882,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(roh)
 
     def do_GET(self) -> None:  # noqa: N802
-        pfad = urlparse(self.path).path
+        aufgeteilt = urlparse(self.path)
+        pfad = aufgeteilt.path
+        parameter = parse_qs(aufgeteilt.query)
         if pfad == "/":
             roh = HTML_KARTE.encode("utf-8")
             self.send_response(HTTPStatus.OK)
@@ -792,7 +895,23 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if pfad == "/api/map-data":
-            self._json_antwort(HTTPStatus.OK, self.datenbank.map_daten())
+            max_age_stunden: float | None = 6.0
+            max_age_wert = parameter.get("max_age", [None])[0]
+            if max_age_wert == "all":
+                max_age_stunden = None
+            else:
+                max_age_hours_wert = parameter.get("max_age_hours", [None])[0]
+                if max_age_hours_wert is not None:
+                    try:
+                        max_age_stunden = float(max_age_hours_wert)
+                    except ValueError:
+                        self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "Ungültiger Parameter max_age_hours"})
+                        return
+                    if max_age_stunden <= 0:
+                        self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "max_age_hours muss größer als 0 sein"})
+                        return
+
+            self._json_antwort(HTTPStatus.OK, self.datenbank.map_daten(max_age_stunden=max_age_stunden))
             return
 
         if pfad == "/api/unused-prefixes":
