@@ -54,6 +54,19 @@ HTML_KARTE = """<!doctype html>
       box-shadow: 0 1px 4px rgba(0,0,0,0.2);
       font-size: 0.85rem;
     }
+    .status-panel {
+      position: absolute;
+      z-index: 1000;
+      bottom: 12px;
+      right: 12px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 0.85rem;
+      line-height: 1.4;
+      min-width: 240px;
+    }
     .prefix-marker-container {
       background: transparent;
       border: none;
@@ -89,6 +102,10 @@ HTML_KARTE = """<!doctype html>
 <body>
   <div class=\"titel-panel\">MeshCore Repeater Live-Karte</div>
   <div id=\"karte\"></div>
+  <div class=\"status-panel\" id=\"status-panel\">
+    Sichtbare Repeater: <span id=\"sichtbare-repeater\">0</span><br>
+    Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span>
+  </div>
   <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
   <script>
@@ -96,12 +113,22 @@ HTML_KARTE = """<!doctype html>
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(karte);
     const markerEbene = L.layerGroup().addTo(karte);
     const linienEbene = L.layerGroup().addTo(karte);
+    const sichtbareRepeaterElement = document.getElementById('sichtbare-repeater');
+    const letztesDatenpaketElement = document.getElementById('letztes-datenpaket');
+    const markerKoordinaten = [];
+
+    function aktualisiereSichtbareRepeater() {
+      const grenzen = karte.getBounds();
+      const anzahlSichtbar = markerKoordinaten.filter(koordinaten => grenzen.contains(koordinaten)).length;
+      sichtbareRepeaterElement.textContent = String(anzahlSichtbar);
+    }
 
     async function aktualisieren() {
       const antwort = await fetch('/api/map-data');
       const daten = await antwort.json();
       markerEbene.clearLayers();
       linienEbene.clearLayers();
+      markerKoordinaten.length = 0;
 
       const punkte = new Map();
       for (const n of daten.nodes) {
@@ -119,6 +146,7 @@ HTML_KARTE = """<!doctype html>
           popupAnchor: [0, -16]
         });
         L.marker([n.latitude, n.longitude], { icon }).bindPopup(popup).addTo(markerEbene);
+        markerKoordinaten.push(L.latLng(n.latitude, n.longitude));
       }
 
       for (const e of daten.edges) {
@@ -127,8 +155,12 @@ HTML_KARTE = """<!doctype html>
           .bindPopup(`Verbindung: ${e.von_id} → ${e.nach_id}`)
           .addTo(linienEbene);
       }
+
+      letztesDatenpaketElement.textContent = daten.last_packet_received || '-';
+      aktualisiereSichtbareRepeater();
     }
 
+    karte.on('moveend zoomend resize', aktualisiereSichtbareRepeater);
     aktualisieren();
     setInterval(aktualisieren, 5000);
   </script>
@@ -722,9 +754,14 @@ class Datenbank:
                     continue
                 edges.add(tuple(sorted((von_id, nach_id))))
 
+            letztes_advert = self.verbindung.execute("SELECT MAX(received_at) FROM adverts").fetchone()[0]
+            letztes_path = self.verbindung.execute("SELECT MAX(received_at) FROM paths").fetchone()[0]
+            letztes_datenpaket = max([zeit for zeit in (letztes_advert, letztes_path) if zeit], default=None)
+
         return {
             "nodes": nodes,
             "edges": [{"von_id": a, "nach_id": b} for a, b in sorted(edges)],
+            "last_packet_received": letztes_datenpaket,
         }
 
 
