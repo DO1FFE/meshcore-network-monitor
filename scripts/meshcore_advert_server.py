@@ -580,6 +580,22 @@ def markiere_prefix_als_benutzt(dateipfad: Path, prefix: str) -> None:
         _schreibe_prefixdatei_atomar(dateipfad, neue_prefixe)
 
 
+def baue_doppelte_prefix_listeneintraege(
+    doppelte_prefixe: list[dict[str, int | str]],
+    unbenutzte_prefixe: list[str],
+) -> list[tuple[str, str]]:
+    eintraege_nach_prefix: dict[str, str] = {}
+    for eintrag in doppelte_prefixe:
+        prefix = str(eintrag["prefix"])
+        eintraege_nach_prefix[prefix] = str(eintrag["anzahl"])
+
+    for prefix in unbenutzte_prefixe:
+        if prefix not in eintraege_nach_prefix:
+            eintraege_nach_prefix[prefix] = "*** BISHER UNBENUTZT ***"
+
+    return sorted(eintraege_nach_prefix.items(), key=lambda eintrag: eintrag[0])
+
+
 def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Berechnet die Großkreisdistanz zweier Koordinaten in Kilometern."""
     radius_erde_km = 6371.0
@@ -1182,8 +1198,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if pfad == "/double":
             doppelte_prefixe = self.datenbank.doppelte_prefixe()
+            unbenutzte_prefixe = lese_unbenutzte_prefixe(self.unbenutzte_prefix_datei)
+            listeneintraege = baue_doppelte_prefix_listeneintraege(doppelte_prefixe, unbenutzte_prefixe)
             listenpunkte = "".join(
-                f"<li><code>{eintrag['prefix']}</code>: {eintrag['anzahl']}</li>" for eintrag in doppelte_prefixe
+                f"<li><code>{prefix}</code>: {anzeige}</li>" for prefix, anzeige in listeneintraege
             )
             if not listenpunkte:
                 listenpunkte = "<li>Keine mehrfach vergebenen 1-Byte Prefixe gefunden.</li>"
