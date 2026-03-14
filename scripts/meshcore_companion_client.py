@@ -526,7 +526,7 @@ def event_an_server_senden(server_url: str, log_daten: dict[str, Any], client_na
                 f"Server meldete HTTP {antwort.status} bei Übertragung an {ziel}."
             )
         print(
-            f"[INFO] Serverantwort HTTP {antwort.status} für Event-Typ {payload_typename or "<unbekannt>"}."
+            f"[INFO] Serverantwort HTTP {antwort.status} für Event-Typ {payload_typename or '<unbekannt>'}."
         )
 
 
