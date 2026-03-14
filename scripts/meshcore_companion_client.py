@@ -128,16 +128,24 @@ async def meshcore_verbinden(optionen: CliOptionen) -> MeshCore:
             async def _ble_verbindungsaufbau() -> MeshCore:
                 try:
                     return await MeshCore.create_ble(
-                        zieladresse,
+                        address=zieladresse,
+                        device=geraet,
                         pin=optionen.pin,
                         default_timeout=optionen.timeout,
                     )
                 except TypeError:
-                    return await MeshCore.create_ble(
-                        address=zieladresse,
-                        pin=optionen.pin,
-                        default_timeout=optionen.timeout,
-                    )
+                    try:
+                        return await MeshCore.create_ble(
+                            address=zieladresse,
+                            pin=optionen.pin,
+                            default_timeout=optionen.timeout,
+                        )
+                    except TypeError:
+                        return await MeshCore.create_ble(
+                            zieladresse,
+                            pin=optionen.pin,
+                            default_timeout=optionen.timeout,
+                        )
 
             letzter_fehler: Verbindungsfehler | None = None
             client = None

@@ -315,7 +315,10 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(client, erwarteter_client)
         create_ble_mock.assert_awaited_once_with(
-            "AA:BB:CC:DD:EE:FF", pin="123456", default_timeout=5.0
+            address="AA:BB:CC:DD:EE:FF",
+            device=geraet,
+            pin="123456",
+            default_timeout=5.0,
         )
 
     async def test_ble_fallback_verwendet_address_parameter_bei_typeerror(self):
@@ -344,8 +347,16 @@ class TestMeshcoreVerbinden(unittest.IsolatedAsyncioTestCase):
         erster_aufruf = create_ble_mock.await_args_list[0]
         zweiter_aufruf = create_ble_mock.await_args_list[1]
 
-        self.assertEqual(erster_aufruf.args, ("11:22:33:44:55:66",))
-        self.assertEqual(erster_aufruf.kwargs, {"pin": None, "default_timeout": 7.0})
+        self.assertEqual(erster_aufruf.args, ())
+        self.assertEqual(
+            erster_aufruf.kwargs,
+            {
+                "address": "11:22:33:44:55:66",
+                "device": geraet,
+                "pin": None,
+                "default_timeout": 7.0,
+            },
+        )
         self.assertEqual(zweiter_aufruf.args, ())
         self.assertEqual(
             zweiter_aufruf.kwargs,
