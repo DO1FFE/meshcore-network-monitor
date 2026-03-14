@@ -596,6 +596,60 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[INFO] RX-Log läuft. Mit Strg+C beenden.", ausgaben)
         self.assertIn("\n[INFO] RX-Log beendet.", ausgaben)
 
+    async def test_rx_log_modus_zeigt_neueste_server_adverts_oben(self):
+        callback_box = {}
+        gui_nachrichten = []
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        def gui_sender(typ, **daten):
+            if typ == "advert_liste":
+                gui_nachrichten.append(list(daten.get("eintraege", [])))
+
+        client = SimpleNamespace(subscribe=subscribe)
+        ereignisse = [
+            SimpleNamespace(
+                payload={
+                    "payload_typename": "ADVERT",
+                    "adv_type": self.modul.REPEATER_TYP_NUMMER,
+                    "adv_key": "aaaa1111",
+                    "adv_name": "Node-Alt",
+                }
+            ),
+            SimpleNamespace(
+                payload={
+                    "payload_typename": "ADVERT",
+                    "adv_type": self.modul.REPEATER_TYP_NUMMER,
+                    "adv_key": "bbbb2222",
+                    "adv_name": "Node-Neu",
+                }
+            ),
+        ]
+        index = {"wert": 0}
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box and index["wert"] < len(ereignisse):
+                await callback_box["callback"](ereignisse[index["wert"]])
+                index["wert"] += 1
+                return
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)), patch.object(
+            self.modul.asyncio, "to_thread", AsyncMock(return_value=None)
+        ), patch.object(self.modul, "advert_persistieren"):
+            await self.modul.rx_log_modus(
+                client,
+                Path("out.jsonl"),
+                "https://server.example",
+                "client-a",
+                gui_sender=gui_sender,
+            )
+
+        self.assertEqual(len(gui_nachrichten), 2)
+        self.assertIn("key=bbbb2222", gui_nachrichten[-1][0])
+        self.assertIn("key=aaaa1111", gui_nachrichten[-1][1])
+
 
 class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
     @classmethod

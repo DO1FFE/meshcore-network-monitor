@@ -355,7 +355,7 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
 
 
 class ClientGui:
-    """Einfache Desktop-GUI mit Geräteinfos, Monitor und ADVERT-Verlauf."""
+    """Einfache Desktop-GUI mit Geräteinfos und ADVERT-Verlauf."""
 
     def __init__(self, titel: str) -> None:
         if tk is None or ttk is None:
@@ -364,14 +364,13 @@ class ClientGui:
         self.nachrichten: queue.Queue[GuiNachricht] = queue.Queue()
         self._root = tk.Tk()
         self._root.title(titel)
-        self._root.geometry("980x700")
-        self._root.minsize(860, 560)
+        self._root.geometry("980x460")
+        self._root.minsize(860, 380)
 
         self._name_wert = tk.StringVar(value="-")
         self._akku_wert = tk.StringVar(value="-")
         self._status_wert = tk.StringVar(value="Initialisierung …")
 
-        self._monitor = tk.Text(self._root, wrap="word", state="disabled", height=18)
         self._advert_liste = tk.Listbox(self._root, height=6)
 
         self._oberflaeche_bauen()
@@ -391,24 +390,11 @@ class ClientGui:
         advert.pack(fill="x", pady=(10, 0))
         self._advert_liste.pack(in_=advert, fill="x", expand=True)
 
-        monitor = ttk.LabelFrame(haupt, text="Monitor (empfangene Daten)", padding=10)
-        monitor.pack(fill="both", expand=True, pady=(10, 0))
-        scroll = ttk.Scrollbar(monitor, orient="vertical", command=self._monitor.yview)
-        self._monitor.configure(yscrollcommand=scroll.set)
-        self._monitor.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-
         status = ttk.Label(haupt, textvariable=self._status_wert, anchor="w")
         status.pack(fill="x", pady=(8, 0))
 
     def nachricht_senden(self, typ: str, **daten: Any) -> None:
         self.nachrichten.put(GuiNachricht(typ=typ, daten=daten))
-
-    def _monitor_zeile(self, text: str) -> None:
-        self._monitor.configure(state="normal")
-        self._monitor.insert("end", text + "\n")
-        self._monitor.see("end")
-        self._monitor.configure(state="disabled")
 
     def _nachrichten_verarbeiten(self) -> None:
         while True:
@@ -420,8 +406,6 @@ class ClientGui:
             if nachricht.typ == "client_info":
                 self._name_wert.set(str(nachricht.daten.get("name", "-")))
                 self._akku_wert.set(str(nachricht.daten.get("akkustand", "-")))
-            elif nachricht.typ == "monitor":
-                self._monitor_zeile(str(nachricht.daten.get("text", "")))
             elif nachricht.typ == "advert_liste":
                 self._advert_liste.delete(0, "end")
                 for eintrag in nachricht.daten.get("eintraege", []):
@@ -704,17 +688,6 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
-def _monitor_zeile_aus_log(log_daten: dict[str, Any]) -> str:
-    """Erzeugt eine kurze, gut lesbare Monitorzeile für die GUI."""
-    zeit = datetime.now().strftime("%H:%M:%S")
-    payload_typ = ermittle_payload_typename(log_daten) or "<unbekannt>"
-    name = log_daten.get("adv_name") or "-"
-    schluessel = log_daten.get("adv_key") or log_daten.get("public_key") or "-"
-    rssi = log_daten.get("rssi")
-    rssi_text = f"{rssi}" if rssi is not None else "-"
-    return f"[{zeit}] {payload_typ} | name={name} | key={schluessel} | rssi={rssi_text}"
-
-
 async def rx_log_modus(
     client: MeshCore,
     ausgabe_pfad: Path,
@@ -747,8 +720,8 @@ async def rx_log_modus(
 
             if ist_advert(log_daten):
                 eintrag = f"{datetime.now().strftime('%H:%M:%S')} | {kompakt}"
-                letzte_adverts.append(eintrag)
-                del letzte_adverts[:-5]
+                letzte_adverts.insert(0, eintrag)
+                del letzte_adverts[5:]
                 _gui_senden("advert_liste", eintraege=list(letzte_adverts))
         except Exception as exc:
             meldung = f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}"
@@ -762,7 +735,6 @@ async def rx_log_modus(
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
-        _gui_senden("monitor", text=_monitor_zeile_aus_log(log_daten))
 
         if server_url and soll_an_server_gesendet_werden(log_daten):
             if not client_name:
