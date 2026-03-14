@@ -129,20 +129,20 @@ async def meshcore_verbinden(optionen: CliOptionen) -> MeshCore:
                 try:
                     return await MeshCore.create_ble(
                         address=zieladresse,
-                        device=geraet,
                         pin=optionen.pin,
                         default_timeout=optionen.timeout,
                     )
                 except TypeError:
                     try:
                         return await MeshCore.create_ble(
-                            address=zieladresse,
+                            zieladresse,
                             pin=optionen.pin,
                             default_timeout=optionen.timeout,
                         )
                     except TypeError:
                         return await MeshCore.create_ble(
-                            zieladresse,
+                            address=zieladresse,
+                            device=geraet,
                             pin=optionen.pin,
                             default_timeout=optionen.timeout,
                         )
