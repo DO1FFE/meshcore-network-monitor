@@ -216,6 +216,42 @@ HTML_KARTE = """<!doctype html>
       line-height: 1;
       font-weight: 700;
     }
+    @media (max-width: 820px) {
+      .titel-panel {
+        top: 10px;
+        left: 12px;
+        right: 12px;
+        transform: none;
+        max-width: none;
+        font-size: 1.25rem;
+        line-height: 1.2;
+      }
+      .filter-panel {
+        top: 84px;
+        left: 12px;
+        right: 12px;
+        min-width: 0;
+      }
+      .status-panel {
+        left: 12px;
+        right: 12px;
+        bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+        min-width: 0;
+        max-width: none;
+      }
+      .download-panel {
+        left: 12px;
+        right: 12px;
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      }
+      .download-link {
+        justify-content: center;
+        width: 100%;
+      }
+      .fusszeile {
+        display: none;
+      }
+    }
   </style>
 </head>
 <body>
