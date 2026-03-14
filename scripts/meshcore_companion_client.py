@@ -756,7 +756,7 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
     parser.add_argument(
         "--pin",
         default=None,
-        help="PIN für Authentifizierung (wenn nicht gesetzt, wird interaktiv abgefragt)",
+        help="Bluetooth PIN für Authentifizierung (wenn nicht gesetzt, wird interaktiv abgefragt)",
     )
     parser.add_argument(
         "--server-url",
@@ -787,7 +787,7 @@ async def async_hauptprogramm() -> int:
     if optionen.server_url:
         server_beim_start_pruefen(optionen.server_url)
 
-    pin = optionen.pin or getpass("PIN eingeben: ")
+    pin = optionen.pin or getpass("Bluetooth PIN eingeben: ")
     if not pin:
         print("[FEHLER] Es wurde keine PIN angegeben.")
         return 2
