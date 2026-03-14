@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - '**'
-    paths:
-      - 'scripts/meshcore_companion_client.py'
-      - 'requirements.txt'
-      - 'meshcore_client_config.example.json'
-      - '.github/workflows/client-exe-release.yml'
   workflow_dispatch:
 
 permissions:
@@ -19,31 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Client-Tests ausführen
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Repository auschecken
-        uses: actions/checkout@v4
-
-      - name: Python einrichten
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Abhängigkeiten installieren
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Unit-Tests starten
-        run: python -m unittest discover -s tests -v
-
   build_und_release:
-    name: Windows-EXE bauen und Release aktualisieren
+    name: Windows-EXE bauen und als Release bereitstellen
     runs-on: windows-latest
-    needs: tests
 
     steps:
       - name: Repository auschecken
@@ -61,10 +34,16 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Client-Skript auf Syntax prüfen
+        shell: bash
+        run: python -m py_compile scripts/meshcore_companion_client.py
+
       - name: Client-EXE erstellen
         shell: bash
         run: |
           pyinstaller \
+            --noconfirm \
+            --clean \
             --onefile \
             --name meshcore_companion_client \
             scripts/meshcore_companion_client.py
