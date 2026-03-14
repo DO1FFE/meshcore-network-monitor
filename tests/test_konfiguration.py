@@ -98,6 +98,14 @@ class TestKonfiguration(unittest.TestCase):
 
 
 
+    def test_gui_standardmaessig_aktiv(self):
+        optionen = self.modul.argumente_einlesen([])
+        self.assertTrue(optionen.gui)
+
+    def test_cli_ohne_gui_deaktiviert_oberflaeche(self):
+        optionen = self.modul.argumente_einlesen(["--ohne-gui"])
+        self.assertFalse(optionen.gui)
+
     def test_cli_server_url_ueberschreibt_konfiguration(self):
         with tempfile.TemporaryDirectory() as tmp:
             pfad = Path(tmp) / "config.json"
