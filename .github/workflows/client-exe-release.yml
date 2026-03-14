@@ -4,14 +4,23 @@ on:
   push:
     branches:
       - '**'
+    paths:
+      - 'scripts/meshcore_companion_client.py'
+      - 'requirements.txt'
+      - 'meshcore_client_config.example.json'
+      - '.github/workflows/client-exe-release.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: client-exe-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
-    name: Tests ausführen
+    name: Client-Tests ausführen
     runs-on: ubuntu-latest
 
     steps:
@@ -76,5 +85,6 @@ jobs:
 
             Commit: ${{ github.sha }}
           files: dist/meshcore_companion_client.exe
+          overwrite_files: true
           prerelease: true
           make_latest: false
