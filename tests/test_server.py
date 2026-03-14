@@ -604,6 +604,22 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(doppelte, [{"prefix": "0a", "anzahl": 2}, {"prefix": "ab", "anzahl": 2}])
 
+    def test_baue_doppelte_prefix_listeneintraege_erganzt_unbenutzte_prefixe(self):
+        doppelte_prefixe = [{"prefix": "0a", "anzahl": 2}, {"prefix": "ab", "anzahl": 3}]
+        unbenutzte_prefixe = ["00", "ab", "ff"]
+
+        eintraege = self.modul.baue_doppelte_prefix_listeneintraege(doppelte_prefixe, unbenutzte_prefixe)
+
+        self.assertEqual(
+            eintraege,
+            [
+                ("00", "*** BISHER UNBENUTZT ***"),
+                ("0a", "2"),
+                ("ab", "3"),
+                ("ff", "*** BISHER UNBENUTZT ***"),
+            ],
+        )
+
     def test_map_daten_bidirektionale_kante_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
