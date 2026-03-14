@@ -1,0 +1,69 @@
+name: Client-EXE bauen und als Release veröffentlichen
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: client-exe-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_und_release:
+    name: Windows-EXE bauen und als Release bereitstellen
+    runs-on: windows-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Abhängigkeiten installieren
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Client-Skript auf Syntax prüfen
+        shell: bash
+        run: python -m py_compile scripts/meshcore_companion_client.py
+
+      - name: Client-EXE erstellen
+        shell: bash
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --clean \
+            --onefile \
+            --name meshcore_companion_client \
+            scripts/meshcore_companion_client.py
+
+      - name: EXE als Build-Artefakt speichern
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshcore_companion_client_exe
+          path: dist/meshcore_companion_client.exe
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: client-exe-latest
+          name: Client EXE (automatisch)
+          body: |
+            Automatisch erzeugte EXE des MeshCore Companion Clients.
+
+            Commit: ${{ github.sha }}
+          files: dist/meshcore_companion_client.exe
+          overwrite_files: true
+          prerelease: true
+          make_latest: false
