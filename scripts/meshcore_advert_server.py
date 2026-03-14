@@ -178,6 +178,44 @@ HTML_KARTE = """<!doctype html>
       overflow: auto;
       font-size: 0.85rem;
     }
+    .download-panel {
+      position: absolute;
+      z-index: 1000;
+      bottom: 12px;
+      left: 12px;
+    }
+    .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: #0f172a;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 7px 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      font-size: 0.85rem;
+      font-weight: 600;
+      transition: background-color 120ms ease-in-out;
+    }
+    .download-link:hover,
+    .download-link:focus-visible {
+      background: #e2e8f0;
+    }
+    .download-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #1d4ed8;
+      color: #fff;
+      font-size: 0.8rem;
+      line-height: 1;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -211,6 +249,18 @@ HTML_KARTE = """<!doctype html>
       </div>
       <ol id="verbundene-clients-liste" class="client-liste"></ol>
     </div>
+  </div>
+  <div class="download-panel">
+    <a
+      class="download-link"
+      href="https://github.com/DO1FFE/meshcore-network-monitor/releases/download/client-exe-latest/meshcore_companion_client.exe"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Client für Windows downloaden"
+    >
+      <span class="download-icon" aria-hidden="true">⬇</span>
+      <span>Client für Windows downloaden</span>
+    </a>
   </div>
   <footer class=\"fusszeile\">Copyright 2026 by Erik Schauer, do1ffe@darc.de</footer>
   <script src=\"https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>
