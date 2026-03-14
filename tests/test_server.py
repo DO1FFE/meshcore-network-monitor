@@ -550,6 +550,60 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(daten["edges"], [])
 
+
+    def test_doppelte_prefixe_liefert_nur_mehrfach_vergebene_sortiert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-AB-1",
+                    "adv_key": "ab11aaaa",
+                    "adv_lat": 50.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-AB-2",
+                    "adv_key": "ab22bbbb",
+                    "adv_lat": 50.8,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-0A-1",
+                    "adv_key": "0a11cccc",
+                    "adv_lat": 51.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-0A-2",
+                    "adv_key": "0a22dddd",
+                    "adv_lat": 52.0,
+                    "adv_lon": 8.0,
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R-7F",
+                    "adv_key": "7f11eeee",
+                    "adv_lat": 53.0,
+                    "adv_lon": 8.0,
+                }
+            )
+
+            doppelte = db.doppelte_prefixe()
+
+        self.assertEqual(doppelte, [{"prefix": "0a", "anzahl": 2}, {"prefix": "ab", "anzahl": 2}])
+
     def test_map_daten_bidirektionale_kante_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")

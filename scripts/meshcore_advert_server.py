@@ -1096,6 +1096,20 @@ class Datenbank:
             "applied_filter_hours": max_age_stunden,
         }
 
+    def doppelte_prefixe(self) -> list[dict[str, int | str]]:
+        with self._sperre:
+            zeilen = self.verbindung.execute(
+                """
+                SELECT prefix, COUNT(DISTINCT repeater_id) AS anzahl
+                FROM repeater_aliases
+                WHERE prefix GLOB '[0-9a-f][0-9a-f]'
+                GROUP BY prefix
+                HAVING COUNT(DISTINCT repeater_id) > 1
+                ORDER BY prefix ASC
+                """
+            )
+            return [{"prefix": zeile["prefix"], "anzahl": zeile["anzahl"]} for zeile in zeilen]
+
 
 class Handler(BaseHTTPRequestHandler):
     datenbank: Datenbank
@@ -1164,6 +1178,27 @@ class Handler(BaseHTTPRequestHandler):
         if pfad == "/api/connected-clients":
             clients = self._bereinige_und_liste_verbundene_clients()
             self._json_antwort(HTTPStatus.OK, {"clients": clients, "count": len(clients)})
+            return
+
+        if pfad == "/double":
+            doppelte_prefixe = self.datenbank.doppelte_prefixe()
+            listenpunkte = "".join(
+                f"<li><code>{eintrag['prefix']}</code>: {eintrag['anzahl']}</li>" for eintrag in doppelte_prefixe
+            )
+            if not listenpunkte:
+                listenpunkte = "<li>Keine mehrfach vergebenen 1-Byte Prefixe gefunden.</li>"
+            roh = (
+                "<!doctype html><html lang='de'><head><meta charset='utf-8'><title>Doppelte Prefixe</title>"
+                "<style>body{font-family:sans-serif;margin:24px}code{font-family:monospace}</style></head><body>"
+                "<h1>Mehrfach vergebene 1-Byte Prefixe</h1>"
+                "<p>Sortierung: Hex-Werte von 00 bis ff.</p>"
+                f"<ul>{listenpunkte}</ul></body></html>"
+            ).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(roh)))
+            self.end_headers()
+            self.wfile.write(roh)
             return
 
         self._json_antwort(HTTPStatus.NOT_FOUND, {"fehler": "nicht gefunden"})
