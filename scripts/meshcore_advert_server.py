@@ -103,6 +103,7 @@ HTML_KARTE = """<!doctype html>
   <div class=\"titel-panel\">MeshCore Repeater Live-Karte</div>
   <div id=\"karte\"></div>
   <div class=\"status-panel\" id=\"status-panel\">
+    Gesamtanzahl Repeater: <span id=\"gesamt-repeater\">0</span><br>
     Sichtbare Repeater: <span id=\"sichtbare-repeater\">0</span><br>
     Letztes Datenpaket: <span id=\"letztes-datenpaket\">-</span>
   </div>
@@ -113,6 +114,7 @@ HTML_KARTE = """<!doctype html>
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(karte);
     const markerEbene = L.layerGroup().addTo(karte);
     const linienEbene = L.layerGroup().addTo(karte);
+    const gesamtRepeaterElement = document.getElementById('gesamt-repeater');
     const sichtbareRepeaterElement = document.getElementById('sichtbare-repeater');
     const letztesDatenpaketElement = document.getElementById('letztes-datenpaket');
     const markerKoordinaten = [];
@@ -126,6 +128,7 @@ HTML_KARTE = """<!doctype html>
     async function aktualisieren() {
       const antwort = await fetch('/api/map-data');
       const daten = await antwort.json();
+      gesamtRepeaterElement.textContent = String(Array.isArray(daten.nodes) ? daten.nodes.length : 0);
       markerEbene.clearLayers();
       linienEbene.clearLayers();
       markerKoordinaten.length = 0;

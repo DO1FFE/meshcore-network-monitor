@@ -17,6 +17,16 @@ class TestAdvertServer(unittest.TestCase):
         spec.loader.exec_module(module)
         cls.modul = module
 
+
+    def test_html_karte_enthaelt_gesamt_repeater_vor_sichtbare_repeater(self):
+        html_karte = self.modul.HTML_KARTE
+        index_gesamt = html_karte.find('id=\"gesamt-repeater\"')
+        index_sichtbar = html_karte.find('id=\"sichtbare-repeater\"')
+
+        self.assertNotEqual(index_gesamt, -1)
+        self.assertNotEqual(index_sichtbar, -1)
+        self.assertLess(index_gesamt, index_sichtbar)
+
     def test_prefix_aus_public_key_liefert_ersten_hex_prefix(self):
         self.assertEqual(self.modul.prefix_aus_public_key("a1b2c3d4"), "a1")
         self.assertEqual(self.modul.prefix_aus_public_key("ab"), "ab")
