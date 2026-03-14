@@ -610,15 +610,12 @@ class TestAdvertServer(unittest.TestCase):
 
         eintraege = self.modul.baue_doppelte_prefix_listeneintraege(doppelte_prefixe, unbenutzte_prefixe)
 
-        self.assertEqual(
-            eintraege,
-            [
-                ("00", "*** BISHER UNBENUTZT ***"),
-                ("0a", "2"),
-                ("ab", "3"),
-                ("ff", "*** BISHER UNBENUTZT ***"),
-            ],
-        )
+        self.assertEqual(len(eintraege), 256)
+        self.assertEqual(eintraege[0], ("00", "*** BISHER UNBENUTZT ***"))
+        self.assertEqual(eintraege[10], ("0a", "2"))
+        self.assertEqual(eintraege[171], ("ab", "3"))
+        self.assertEqual(eintraege[255], ("ff", "*** BISHER UNBENUTZT ***"))
+        self.assertIn(("7e", "1"), eintraege)
 
     def test_map_daten_bidirektionale_kante_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:

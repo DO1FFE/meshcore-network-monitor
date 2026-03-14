@@ -584,13 +584,15 @@ def baue_doppelte_prefix_listeneintraege(
     doppelte_prefixe: list[dict[str, int | str]],
     unbenutzte_prefixe: list[str],
 ) -> list[tuple[str, str]]:
-    eintraege_nach_prefix: dict[str, str] = {}
+    eintraege_nach_prefix: dict[str, str] = {f"{wert:02x}": "1" for wert in range(256)}
+    mehrfach_vergeben: set[str] = set()
     for eintrag in doppelte_prefixe:
         prefix = str(eintrag["prefix"])
         eintraege_nach_prefix[prefix] = str(eintrag["anzahl"])
+        mehrfach_vergeben.add(prefix)
 
     for prefix in unbenutzte_prefixe:
-        if prefix not in eintraege_nach_prefix:
+        if prefix not in mehrfach_vergeben:
             eintraege_nach_prefix[prefix] = "*** BISHER UNBENUTZT ***"
 
     return sorted(eintraege_nach_prefix.items(), key=lambda eintrag: eintrag[0])
