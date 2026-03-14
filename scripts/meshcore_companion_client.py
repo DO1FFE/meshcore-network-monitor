@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import asyncio
 import json
+import queue
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from getpass import getpass
@@ -24,6 +27,13 @@ except ImportError:  # BLE ist optional und wird nur für --ble-scan benötigt.
     BleakError = Exception
     BleakDeviceNotFoundError = Exception
     BleakDBusError = Exception
+
+try:
+    import tkinter as tk
+    from tkinter import ttk
+except ImportError:  # Tkinter ist optional für den GUI-Modus.
+    tk = None
+    ttk = None
 
 REPEATER_TYP_NUMMER = 0x02
 AUSGABE_PFAD_STANDARD = Path("data/repeater_adverts.jsonl")
@@ -44,6 +54,7 @@ class CliOptionen:
     server_url: str | None
     client_name: str
     ble_retry_einmal: bool = True
+    gui: bool = True
 
 
 STANDARD_KONFIGURATION = {
@@ -56,7 +67,16 @@ STANDARD_KONFIGURATION = {
     "server_url": "https://mesh.do1ffe.de",
     "client_name": "meshcore-client",
     "ble_retry_einmal": True,
+    "gui": True,
 }
+
+
+@dataclass(slots=True)
+class GuiNachricht:
+    """Nachricht für die Kommunikation zwischen Async-Client und GUI."""
+
+    typ: str
+    daten: dict[str, Any]
 
 
 async def ble_geraet_interaktiv_auswaehlen(timeout: float) -> Any:
@@ -259,42 +279,46 @@ async def authentifizieren(client: MeshCore, pin: str) -> None:
         raise Verbindungsfehler(f"Unerwartete Antwort bei Login: {antwort.type}")
 
 
-async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
-    """Liest Gerätename und Akkustand aus und formatiert die Ausgabe."""
-    self_info = client.self_info or {}
-    name = self_info.get("name", "<unbekannt>")
-
-    def _normalisierte_prozentzahl(zahl: float) -> float:
-        if 0.0 <= zahl <= 1.0:
-            return zahl * 100.0
-        if 1.0 < zahl <= 100.0:
-            return zahl
-        if 1000.0 <= zahl <= 5000.0:
-            # Viele Firmwarestände liefern die Batteriespannung in mV (z. B. 4200).
-            untergrenze_mv = 3000.0
-            obergrenze_mv = 4200.0
-            prozent = ((zahl - untergrenze_mv) / (obergrenze_mv - untergrenze_mv)) * 100.0
-            return max(0.0, min(100.0, prozent))
+def _normalisierte_batterie_prozentzahl(zahl: float) -> float:
+    """Normalisiert verschiedene Batteriedarstellungen auf Prozentwerte."""
+    if 0.0 <= zahl <= 1.0:
+        return zahl * 100.0
+    if 1.0 < zahl <= 100.0:
         return zahl
+    if 1000.0 <= zahl <= 5000.0:
+        # Viele Firmwarestände liefern die Batteriespannung in mV (z. B. 4200).
+        untergrenze_mv = 3000.0
+        obergrenze_mv = 4200.0
+        prozent = ((zahl - untergrenze_mv) / (obergrenze_mv - untergrenze_mv)) * 100.0
+        return max(0.0, min(100.0, prozent))
+    return zahl
 
-    def _zu_prozent_text(wert: Any) -> str | None:
-        if wert is None:
-            return None
-        if isinstance(wert, (int, float)):
-            return f"{_normalisierte_prozentzahl(float(wert)):.0f}%"
-        if isinstance(wert, str):
-            text = wert.strip()
-            if not text:
-                return None
-            if text.endswith("%"):
-                return text
-            try:
-                return f"{_normalisierte_prozentzahl(float(text)):.0f}%"
-            except ValueError:
-                return f"{text}%"
+
+def _zu_batterie_text(wert: Any) -> str | None:
+    """Konvertiert einen Rohwert robust in eine Prozentanzeige."""
+    if wert is None:
         return None
+    if isinstance(wert, (int, float)):
+        return f"{_normalisierte_batterie_prozentzahl(float(wert)):.0f}%"
+    if isinstance(wert, str):
+        text = wert.strip()
+        if not text:
+            return None
+        if text.endswith("%"):
+            return text
+        try:
+            return f"{_normalisierte_batterie_prozentzahl(float(text)):.0f}%"
+        except ValueError:
+            return f"{text}%"
+    return None
 
-    battery_text = None
+
+async def lese_geraeteinformationen(client: MeshCore) -> dict[str, str]:
+    """Liest Name und Akkustand aus dem MeshCore-Client."""
+    self_info = client.self_info or {}
+    name = str(self_info.get("name") or "<unbekannt>")
+
+    batterie_text = None
     try:
         bat_event = await client.commands.get_bat()
     except Exception:
@@ -303,24 +327,116 @@ async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
     if bat_event is not None and bat_event.type != EventType.ERROR:
         payload = bat_event.payload if isinstance(bat_event.payload, dict) else {}
         for schluessel in ("battery_level", "battery", "percent", "level"):
-            battery_text = _zu_prozent_text(payload.get(schluessel))
-            if battery_text:
+            batterie_text = _zu_batterie_text(payload.get(schluessel))
+            if batterie_text:
                 break
 
-    if not battery_text:
+    if not batterie_text:
         for schluessel in ("battery_level", "battery", "battery_percent", "percent", "level"):
-            battery_text = _zu_prozent_text(self_info.get(schluessel))
-            if battery_text:
+            batterie_text = _zu_batterie_text(self_info.get(schluessel))
+            if batterie_text:
                 break
 
-    if not battery_text:
-        battery_text = "<nicht verfügbar>"
+    if not batterie_text:
+        batterie_text = "<nicht verfügbar>"
 
+    return {"name": name, "akkustand": batterie_text}
+
+
+async def geraeteinformationen_ausgeben(client: MeshCore) -> None:
+    """Liest Gerätename und Akkustand aus und formatiert die Ausgabe."""
+    infos = await lese_geraeteinformationen(client)
     print("\n=== Geräteinformationen ===")
-    print(f"Name      : {name}")
-    print(f"Akkustand : {battery_text}")
+    print(f"Name      : {infos['name']}")
+    print(f"Akkustand : {infos['akkustand']}")
     print("==========================\n")
 
+
+
+
+class ClientGui:
+    """Einfache Desktop-GUI mit Geräteinfos, Monitor und ADVERT-Verlauf."""
+
+    def __init__(self, titel: str) -> None:
+        if tk is None or ttk is None:
+            raise Verbindungsfehler("GUI-Modus ist nicht verfügbar: tkinter ist nicht installiert.")
+
+        self.nachrichten: queue.Queue[GuiNachricht] = queue.Queue()
+        self._root = tk.Tk()
+        self._root.title(titel)
+        self._root.geometry("980x700")
+        self._root.minsize(860, 560)
+
+        self._name_wert = tk.StringVar(value="-")
+        self._akku_wert = tk.StringVar(value="-")
+        self._status_wert = tk.StringVar(value="Initialisierung …")
+
+        self._monitor = tk.Text(self._root, wrap="word", state="disabled", height=18)
+        self._advert_liste = tk.Listbox(self._root, height=6)
+
+        self._oberflaeche_bauen()
+
+    def _oberflaeche_bauen(self) -> None:
+        haupt = ttk.Frame(self._root, padding=12)
+        haupt.pack(fill="both", expand=True)
+
+        info = ttk.LabelFrame(haupt, text="Eigener Client", padding=10)
+        info.pack(fill="x")
+        ttk.Label(info, text="Name:").grid(row=0, column=0, sticky="w")
+        ttk.Label(info, textvariable=self._name_wert).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(info, text="Akkustand:").grid(row=0, column=2, sticky="w", padx=(24, 0))
+        ttk.Label(info, textvariable=self._akku_wert).grid(row=0, column=3, sticky="w", padx=(8, 0))
+
+        advert = ttk.LabelFrame(haupt, text="Letzte 5 an den Server gesendete ADVERT", padding=10)
+        advert.pack(fill="x", pady=(10, 0))
+        self._advert_liste.pack(in_=advert, fill="x", expand=True)
+
+        monitor = ttk.LabelFrame(haupt, text="Monitor (empfangene Daten)", padding=10)
+        monitor.pack(fill="both", expand=True, pady=(10, 0))
+        scroll = ttk.Scrollbar(monitor, orient="vertical", command=self._monitor.yview)
+        self._monitor.configure(yscrollcommand=scroll.set)
+        self._monitor.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        status = ttk.Label(haupt, textvariable=self._status_wert, anchor="w")
+        status.pack(fill="x", pady=(8, 0))
+
+    def nachricht_senden(self, typ: str, **daten: Any) -> None:
+        self.nachrichten.put(GuiNachricht(typ=typ, daten=daten))
+
+    def _monitor_zeile(self, text: str) -> None:
+        self._monitor.configure(state="normal")
+        self._monitor.insert("end", text + "\n")
+        self._monitor.see("end")
+        self._monitor.configure(state="disabled")
+
+    def _nachrichten_verarbeiten(self) -> None:
+        while True:
+            try:
+                nachricht = self.nachrichten.get_nowait()
+            except queue.Empty:
+                break
+
+            if nachricht.typ == "client_info":
+                self._name_wert.set(str(nachricht.daten.get("name", "-")))
+                self._akku_wert.set(str(nachricht.daten.get("akkustand", "-")))
+            elif nachricht.typ == "monitor":
+                self._monitor_zeile(str(nachricht.daten.get("text", "")))
+            elif nachricht.typ == "advert_liste":
+                self._advert_liste.delete(0, "end")
+                for eintrag in nachricht.daten.get("eintraege", []):
+                    self._advert_liste.insert("end", str(eintrag))
+            elif nachricht.typ == "status":
+                self._status_wert.set(str(nachricht.daten.get("text", "")))
+            elif nachricht.typ == "beenden":
+                self._root.quit()
+                return
+
+        self._root.after(200, self._nachrichten_verarbeiten)
+
+    def ausfuehren(self) -> None:
+        self._root.after(200, self._nachrichten_verarbeiten)
+        self._root.mainloop()
 
 
 def client_name_aus_meshcore_geraet(client: MeshCore, fallback_name: str | None = None) -> str:
@@ -588,21 +704,56 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
+def _monitor_zeile_aus_log(log_daten: dict[str, Any]) -> str:
+    """Erzeugt eine kurze, gut lesbare Monitorzeile für die GUI."""
+    zeit = datetime.now().strftime("%H:%M:%S")
+    payload_typ = ermittle_payload_typename(log_daten) or "<unbekannt>"
+    name = log_daten.get("adv_name") or "-"
+    schluessel = log_daten.get("adv_key") or log_daten.get("public_key") or "-"
+    rssi = log_daten.get("rssi")
+    rssi_text = f"{rssi}" if rssi is not None else "-"
+    return f"[{zeit}] {payload_typ} | name={name} | key={schluessel} | rssi={rssi_text}"
+
+
 async def rx_log_modus(
     client: MeshCore,
     ausgabe_pfad: Path,
     server_url: str | None = None,
     client_name: str | None = None,
+    gui_sender: Any | None = None,
 ) -> None:
     """Kontinuierlicher RX-Log-Modus mit Persistierung von REPEATER-ADVERTs."""
     uebertragungs_tasks: set[asyncio.Task[None]] = set()
+    letzte_adverts: list[str] = []
+
+    def _gui_senden(typ: str, **daten: Any) -> None:
+        if gui_sender is not None:
+            gui_sender(typ, **daten)
+
+    async def _batterie_aktualisieren() -> None:
+        while True:
+            try:
+                infos = await lese_geraeteinformationen(client)
+                _gui_senden("client_info", **infos)
+            except Exception:
+                pass
+            await asyncio.sleep(10.0)
 
     async def _event_asynchron_an_server_senden(log_daten: dict[str, Any]) -> None:
         try:
             await asyncio.to_thread(event_an_server_senden, server_url, log_daten, client_name)
-            print(f"[INFO] An Server übertragen: {kompakte_server_info(log_daten)}")
+            kompakt = kompakte_server_info(log_daten)
+            print(f"[INFO] An Server übertragen: {kompakt}")
+
+            if ist_advert(log_daten):
+                eintrag = f"{datetime.now().strftime('%H:%M:%S')} | {kompakt}"
+                letzte_adverts.append(eintrag)
+                del letzte_adverts[:-5]
+                _gui_senden("advert_liste", eintraege=list(letzte_adverts))
         except Exception as exc:
-            print(f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}")
+            meldung = f"[WARNUNG] Übertragung an Server fehlgeschlagen: {exc}"
+            print(meldung)
+            _gui_senden("status", text=meldung)
 
     def _uebertragung_task_registrieren(log_daten: dict[str, Any]) -> None:
         task = asyncio.create_task(_event_asynchron_an_server_senden(log_daten))
@@ -611,10 +762,13 @@ async def rx_log_modus(
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
+        _gui_senden("monitor", text=_monitor_zeile_aus_log(log_daten))
 
         if server_url and soll_an_server_gesendet_werden(log_daten):
             if not client_name:
-                print("[WARNUNG] Kein Client-Name gesetzt, Event wird nicht an den Server übertragen.")
+                warnung = "[WARNUNG] Kein Client-Name gesetzt, Event wird nicht an den Server übertragen."
+                print(warnung)
+                _gui_senden("status", text=warnung)
             else:
                 _uebertragung_task_registrieren(log_daten)
 
@@ -646,6 +800,8 @@ async def rx_log_modus(
 
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 
+    batterie_task = asyncio.create_task(_batterie_aktualisieren())
+    _gui_senden("status", text="RX-Log läuft")
     print("[INFO] RX-Log läuft. Mit Strg+C beenden.")
     try:
         while True:
@@ -654,6 +810,11 @@ async def rx_log_modus(
         if uebertragungs_tasks:
             await asyncio.gather(*uebertragungs_tasks, return_exceptions=True)
         print("\n[INFO] RX-Log beendet.")
+    finally:
+        batterie_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await batterie_task
+
 
 
 def konfiguration_laden(konfigurations_pfad: Path) -> dict[str, Any]:
@@ -709,6 +870,10 @@ def optionen_aus_argumenten_und_konfiguration(
     if not client_name:
         client_name = "meshcore-client"
     ble_retry_einmal = bool(konfiguration.get("ble_retry_einmal", True))
+    gui = bool(konfiguration.get("gui", True))
+
+    if args.gui is not None:
+        gui = bool(args.gui)
 
     return CliOptionen(
         com_port=com_port,
@@ -720,6 +885,7 @@ def optionen_aus_argumenten_und_konfiguration(
         server_url=server_url,
         client_name=str(client_name),
         ble_retry_einmal=ble_retry_einmal,
+        gui=gui,
     )
 
 
@@ -769,6 +935,20 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
         help="Name dieses Clients für die Anzeige verbundener Clients am Server",
     )
     parser.add_argument(
+        "--gui",
+        dest="gui",
+        action="store_true",
+        default=None,
+        help="Startet die grafische Oberfläche (Standard).",
+    )
+    parser.add_argument(
+        "--ohne-gui",
+        dest="gui",
+        action="store_false",
+        default=None,
+        help="Deaktiviert die grafische Oberfläche und nutzt reine Konsolenausgabe.",
+    )
+    parser.add_argument(
         "--config",
         type=Path,
         default=Path("meshcore_client_config.json"),
@@ -780,10 +960,8 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
     return optionen_aus_argumenten_und_konfiguration(args, konfiguration)
 
 
-async def async_hauptprogramm() -> int:
-    """Asynchroner Programmeinstieg."""
-    optionen = argumente_einlesen()
-
+async def _client_hauptablauf(optionen: CliOptionen, gui_sender: Any | None = None) -> int:
+    """Führt Verbindungsaufbau, Login und RX-Log aus."""
     if optionen.server_url:
         server_beim_start_pruefen(optionen.server_url)
 
@@ -797,16 +975,35 @@ async def async_hauptprogramm() -> int:
     try:
         client = await meshcore_verbinden(optionen)
         await authentifizieren(client, optionen.pin)
-        await geraeteinformationen_ausgeben(client)
+
+        infos = await lese_geraeteinformationen(client)
+        if gui_sender is None:
+            await geraeteinformationen_ausgeben(client)
+        else:
+            gui_sender("client_info", **infos)
+
         client_name = client_name_aus_meshcore_geraet(client, optionen.client_name)
         print(f"[INFO] Client-Name für Serverübertragung: {client_name}")
-        await rx_log_modus(client, optionen.ausgabe_pfad, optionen.server_url, client_name)
+        if gui_sender is not None:
+            gui_sender("status", text=f"Verbunden als {client_name}")
+
+        await rx_log_modus(
+            client,
+            optionen.ausgabe_pfad,
+            optionen.server_url,
+            client_name,
+            gui_sender=gui_sender,
+        )
         return 0
     except Verbindungsfehler as exc:
         print(f"[FEHLER] {exc}")
+        if gui_sender is not None:
+            gui_sender("status", text=f"Fehler: {exc}")
         return 1
     except Exception as exc:
         print(f"[FEHLER] Unerwarteter Fehler: {exc}")
+        if gui_sender is not None:
+            gui_sender("status", text=f"Unerwarteter Fehler: {exc}")
         return 1
     finally:
         if client is not None:
@@ -816,10 +1013,45 @@ async def async_hauptprogramm() -> int:
                 pass
 
 
+async def async_hauptprogramm() -> int:
+    """Asynchroner Programmeinstieg."""
+    optionen = argumente_einlesen()
+    return await _client_hauptablauf(optionen)
+
+
+def _gui_hintergrund_thread(optionen: CliOptionen, gui: ClientGui) -> None:
+    """Startet den asynchronen Client in einem Hintergrund-Thread."""
+
+    async def _runner() -> None:
+        try:
+            await _client_hauptablauf(optionen, gui.nachricht_senden)
+        finally:
+            gui.nachricht_senden("beenden")
+
+    asyncio.run(_runner())
+
+
 def hauptprogramm() -> None:
     """Synchroner CLI-Startpunkt."""
+    optionen = argumente_einlesen()
+
+    if optionen.gui:
+        gui = ClientGui("MeshCore Netzwerkmonitor")
+        thread = threading.Thread(
+            target=_gui_hintergrund_thread,
+            args=(optionen, gui),
+            daemon=True,
+            name="meshcore-gui-backend",
+        )
+        thread.start()
+        try:
+            gui.ausfuehren()
+        except KeyboardInterrupt:
+            print("\n[INFO] Programm durch Benutzer beendet.")
+        return
+
     try:
-        raise SystemExit(asyncio.run(async_hauptprogramm()))
+        raise SystemExit(asyncio.run(_client_hauptablauf(optionen)))
     except KeyboardInterrupt:
         print("\n[INFO] Programm durch Benutzer beendet.")
         raise SystemExit(0)
