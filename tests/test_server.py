@@ -595,6 +595,22 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(daten["edges"], [])
 
+    def test_map_daten_enthaelt_zeitpunkt_letztes_datenpaket(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R2",
+                    "adv_key": "ddee1122",
+                }
+            )
+
+            daten = db.map_daten()
+
+        self.assertIn("last_packet_received", daten)
+        self.assertIsNotNone(daten["last_packet_received"])
+
     def test_map_daten_json_serialisierbar(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
