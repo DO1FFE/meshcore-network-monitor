@@ -1,10 +1,12 @@
 import asyncio
+import io
 import importlib.util
 import json
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -45,6 +47,17 @@ class TestKonfiguration(unittest.TestCase):
         self.assertEqual(optionen.server_url, "https://mesh.do1ffe.de")
         self.assertTrue(isinstance(optionen.client_name, str))
         self.assertTrue(len(optionen.client_name) > 0)
+
+    def test_start_header_ausgeben_enthaelt_copyright(self):
+        ausgabe = io.StringIO()
+        with redirect_stdout(ausgabe):
+            self.modul.start_header_ausgeben()
+
+        text = ausgabe.getvalue()
+        self.assertIn("MeshCore Companion Client", text)
+        self.assertIn("Copyright (c) 2026", text)
+        self.assertIn("Erik Schauer", text)
+        self.assertIn("do1ffe@darc.de", text)
 
     def test_konfiguration_com_port_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:

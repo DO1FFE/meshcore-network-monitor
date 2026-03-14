@@ -59,6 +59,15 @@ STANDARD_KONFIGURATION = {
 }
 
 
+def start_header_ausgeben() -> None:
+    """Zeigt beim Programmstart einen kurzen Header mit Copyright an."""
+    print("=" * 62)
+    print(" MeshCore Companion Client")
+    print(" Copyright (c) 2026 Erik Schauer, do1ffe@darc.de")
+    print("=" * 62)
+    print()
+
+
 async def ble_geraet_interaktiv_auswaehlen(timeout: float) -> Any:
     """Scannt BLE-Geräte und fragt interaktiv nach einer Auswahl."""
     if BleakScanner is None:
@@ -782,6 +791,7 @@ def argumente_einlesen(argv: list[str] | None = None) -> CliOptionen:
 
 async def async_hauptprogramm() -> int:
     """Asynchroner Programmeinstieg."""
+    start_header_ausgeben()
     optionen = argumente_einlesen()
 
     if optionen.server_url:
