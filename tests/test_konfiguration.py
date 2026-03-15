@@ -821,5 +821,68 @@ class TestServerPayloadAufbereitung(unittest.TestCase):
         self.assertEqual(args[0], "https://server.example/api/events")
 
 
+class TestAsyncHauptprogramm(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_async_hauptprogramm_fragt_pin_nicht_im_com_modus_ab(self):
+        optionen = self.modul.CliOptionen(
+            com_port="COM3",
+            baudrate=115200,
+            ble_scan=False,
+            timeout=10.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin=None,
+            server_url=None,
+            client_name="client-a",
+            ble_retry_einmal=True,
+        )
+        client = SimpleNamespace(disconnect=AsyncMock())
+
+        with patch.object(self.modul, "argumente_einlesen", return_value=optionen), patch.object(
+            self.modul, "meshcore_verbinden", AsyncMock(return_value=client)
+        ), patch.object(self.modul, "authentifizieren", AsyncMock()) as authentifizieren_mock, patch.object(
+            self.modul, "geraeteinformationen_ausgeben", AsyncMock()
+        ), patch.object(
+            self.modul, "rx_log_modus", AsyncMock(side_effect=asyncio.CancelledError())
+        ), patch.object(
+            self.modul, "getpass", side_effect=AssertionError("getpass darf bei COM nicht aufgerufen werden")
+        ), patch("builtins.print"):
+            rueckgabe = await self.modul.async_hauptprogramm()
+
+        self.assertEqual(rueckgabe, 1)
+        authentifizieren_mock.assert_not_awaited()
+
+    async def test_async_hauptprogramm_fragt_pin_im_ble_modus_ab(self):
+        optionen = self.modul.CliOptionen(
+            com_port=None,
+            baudrate=115200,
+            ble_scan=True,
+            timeout=10.0,
+            ausgabe_pfad=Path("out.jsonl"),
+            pin=None,
+            server_url=None,
+            client_name="client-a",
+            ble_retry_einmal=True,
+        )
+        client = SimpleNamespace(disconnect=AsyncMock())
+
+        with patch.object(self.modul, "argumente_einlesen", return_value=optionen), patch.object(
+            self.modul, "meshcore_verbinden", AsyncMock(return_value=client)
+        ), patch.object(self.modul, "authentifizieren", AsyncMock()) as authentifizieren_mock, patch.object(
+            self.modul, "geraeteinformationen_ausgeben", AsyncMock()
+        ), patch.object(
+            self.modul, "rx_log_modus", AsyncMock(side_effect=asyncio.CancelledError())
+        ), patch.object(self.modul, "getpass", return_value="123456") as getpass_mock, patch("builtins.print"):
+            rueckgabe = await self.modul.async_hauptprogramm()
+
+        self.assertEqual(rueckgabe, 1)
+        getpass_mock.assert_called_once_with("Bluetooth PIN eingeben: ")
+        authentifizieren_mock.assert_awaited_once_with(client, "123456")
+
+
 if __name__ == "__main__":
     unittest.main()

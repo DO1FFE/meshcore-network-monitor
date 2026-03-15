@@ -805,16 +805,18 @@ async def async_hauptprogramm() -> int:
     if optionen.server_url:
         server_beim_start_pruefen(optionen.server_url)
 
-    pin = optionen.pin or getpass("Bluetooth PIN eingeben: ")
-    if not pin:
-        print("[FEHLER] Es wurde keine PIN angegeben.")
-        return 2
-    optionen.pin = pin
+    if optionen.com_port is None:
+        pin = optionen.pin or getpass("Bluetooth PIN eingeben: ")
+        if not pin:
+            print("[FEHLER] Es wurde keine PIN angegeben.")
+            return 2
+        optionen.pin = pin
 
     client = None
     try:
         client = await meshcore_verbinden(optionen)
-        await authentifizieren(client, optionen.pin)
+        if optionen.com_port is None:
+            await authentifizieren(client, optionen.pin)
         await geraeteinformationen_ausgeben(client)
         client_name = client_name_aus_meshcore_geraet(client, optionen.client_name)
         print(f"[INFO] Client-Name für Serverübertragung: {client_name}")
