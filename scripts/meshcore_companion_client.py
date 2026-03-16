@@ -720,6 +720,66 @@ async def _sende_direktantwort(client: MeshCore, empfaenger: Any, nachricht: str
         return False
 
 
+async def _sende_kanalantwort(
+    client: MeshCore,
+    kanal: str,
+    nachricht: str,
+    sender: Any,
+) -> bool:
+    """Sendet eine Kanalantwort und versucht, den Sender als Reply-Ziel zu markieren."""
+    commands = getattr(client, "commands", None)
+    if commands is None:
+        print("[WARNUNG] Bot-Antwort abgebrochen: client.commands ist nicht verfügbar.")
+        return False
+
+    kandidaten = [
+        "send_channel_msg_with_retry",
+        "send_channel_msg",
+        "send_msg_with_retry",
+        "send_msg",
+    ]
+    sendefunktion = None
+    for funktionsname in kandidaten:
+        kandidat = getattr(commands, funktionsname, None)
+        if callable(kandidat):
+            sendefunktion = kandidat
+            break
+
+    if sendefunktion is None:
+        print(
+            "[WARNUNG] Bot-Antwort abgebrochen: Keine kompatible Sende-Funktion für Kanalantwort gefunden."
+        )
+        return False
+
+    varianten = [
+        ((kanal, nachricht), {"reply_to": sender}),
+        ((kanal, nachricht), {"reply_to_key": sender}),
+        ((kanal, nachricht), {"to": sender}),
+        ((kanal, nachricht), {}),
+        ((sender, nachricht), {}),
+    ]
+
+    letzter_fehler: Exception | None = None
+    for args, kwargs in varianten:
+        try:
+            await sendefunktion(*args, **kwargs)
+            return True
+        except TypeError as exc:
+            letzter_fehler = exc
+            continue
+        except Exception as exc:
+            print(f"[WARNUNG] Bot-Antwort fehlgeschlagen: {exc}")
+            return False
+
+    if letzter_fehler is not None:
+        print(
+            "[WARNUNG] Bot-Antwort fehlgeschlagen: Keine unterstützte Aufrufsignatur für "
+            f"{getattr(sendefunktion, '__name__', 'Sende-Funktion')} "
+            f"(letzter Fehler: {letzter_fehler})."
+        )
+    return False
+
+
 async def rx_log_modus(
     client: MeshCore,
     ausgabe_pfad: Path,
@@ -751,7 +811,7 @@ async def rx_log_modus(
         sender_roh, sender_anzeige = _sender_rohwert_und_anzeige(log_daten)
         pfadsegmente = _ermittle_pfadsegmente(log_daten)
         pfad_serialisiert = " -> ".join(pfadsegmente) if pfadsegmente else "<kein Pfad>"
-        hop_anzahl = max(len(pfadsegmente) - 1, 0)
+        hop_anzahl = len(pfadsegmente)
 
         if server_url and soll_an_server_gesendet_werden(log_daten):
             if not client_name:
@@ -798,11 +858,10 @@ async def rx_log_modus(
             )
             return
 
-        antwort = (
-            "Bot-Antwort empfangen. "
-            f"Kanal={kanal_normalisiert}, Hops={hop_anzahl}, Pfad={pfad_serialisiert}"
-        )
-        erfolgreich = await _sende_direktantwort(client, sender_roh, antwort)
+        sender_mention = sender_anzeige if sender_anzeige.startswith("@") else f"@{sender_anzeige}"
+        pfad_mit_komma = f"({','.join(pfadsegmente)})" if pfadsegmente else "(<kein-pfad>)"
+        antwort = f"{sender_mention} {hop_anzahl} Hops {pfad_mit_komma}"
+        erfolgreich = await _sende_kanalantwort(client, kanal_normalisiert, antwort, sender_roh)
         if erfolgreich:
             print(
                 "[INFO] Bot-Antwort gesendet: "
