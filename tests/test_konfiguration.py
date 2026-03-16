@@ -720,7 +720,40 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
 
         send_msg.assert_not_called()
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
-        self.assertTrue(any(ausgabe.startswith("[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt") for ausgabe in ausgaben))
+        self.assertTrue(any(ausgabe.startswith("[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt und kein Kanalindex verfügbar") for ausgabe in ausgaben))
+
+
+    async def test_rx_log_modus_sendet_antwort_ueber_kanalindex_ohne_sender(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        send_chan_msg = AsyncMock(return_value=SimpleNamespace(type="MSG_SENT"))
+        client = SimpleNamespace(
+            subscribe=subscribe,
+            commands=SimpleNamespace(send_chan_msg=send_chan_msg),
+        )
+        ereignis = SimpleNamespace(
+            payload={
+                "chan_name": "test",
+                "channel_idx": 1,
+                "text": "Test",
+                "path": ["hop-a", "hop-b"],
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)):
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        send_chan_msg.assert_awaited_once()
+        self.assertEqual(send_chan_msg.await_args.args[0], 1)
+        self.assertIn("2 Hops", send_chan_msg.await_args.args[1])
 
     async def test_rx_log_modus_erkennt_test_kanal_aus_channel_objekt(self):
         callback_box = {}

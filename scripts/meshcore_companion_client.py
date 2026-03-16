@@ -634,7 +634,7 @@ def _kanal_aus_log_daten(log_daten: dict[str, Any]) -> str:
     """Ermittelt den Kanalnamen robust aus top-level oder verschachtelten Feldern."""
     kanal_roh = _wert_aus_schluesseln(
         log_daten,
-        ["channel", "channel_name", "chan", "channelName", "channel_label"],
+        ["channel", "channel_name", "chan", "chan_name", "channelName", "channel_label"],
     )
     if isinstance(kanal_roh, dict):
         kanal_roh = _wert_aus_schluesseln(
@@ -651,6 +651,29 @@ def _kanal_aus_log_daten(log_daten: dict[str, Any]) -> str:
             )
 
     return _normalisiere_kanalname(kanal_roh)
+
+
+def _kanal_index_aus_log_daten(log_daten: dict[str, Any]) -> int | None:
+    """Ermittelt den Kanalindex robust aus top-level oder verschachtelten Feldern."""
+    kanal_index_roh = _wert_aus_schluesseln(
+        log_daten,
+        ["channel_idx", "channel_index", "chan_idx", "channelId", "channel_id"],
+    )
+    if kanal_index_roh is None:
+        payload_roh = log_daten.get("payload")
+        if isinstance(payload_roh, dict):
+            kanal_index_roh = _wert_aus_schluesseln(
+                payload_roh,
+                ["channel_idx", "channel_index", "chan_idx", "channelId", "channel_id"],
+            )
+
+    if kanal_index_roh is None:
+        return None
+
+    try:
+        return int(str(kanal_index_roh).strip(), 0)
+    except (TypeError, ValueError):
+        return None
 
 
 def _nachricht_aus_log_daten(log_daten: dict[str, Any]) -> str:
@@ -771,6 +794,7 @@ async def _sende_kanalantwort(
     kanal: str,
     nachricht: str,
     sender: Any,
+    kanal_index: int | None,
 ) -> bool:
     """Sendet eine Kanalantwort und versucht, den Sender als Reply-Ziel zu markieren."""
     commands = getattr(client, "commands", None)
@@ -779,6 +803,7 @@ async def _sende_kanalantwort(
         return False
 
     kandidaten = [
+        "send_chan_msg",
         "send_channel_msg_with_retry",
         "send_channel_msg",
         "send_msg_with_retry",
@@ -798,6 +823,7 @@ async def _sende_kanalantwort(
         return False
 
     varianten = [
+        ((kanal_index, nachricht), {}) if kanal_index is not None else None,
         ((kanal, nachricht), {"reply_to": sender}),
         ((kanal, nachricht), {"reply_to_key": sender}),
         ((kanal, nachricht), {"to": sender}),
@@ -806,7 +832,10 @@ async def _sende_kanalantwort(
     ]
 
     letzter_fehler: Exception | None = None
-    for args, kwargs in varianten:
+    for var in varianten:
+        if var is None:
+            continue
+        args, kwargs = var
         try:
             await sendefunktion(*args, **kwargs)
             return True
@@ -851,6 +880,7 @@ async def rx_log_modus(
         log_daten = event.payload if isinstance(event.payload, dict) else {}
 
         kanal_normalisiert = _kanal_aus_log_daten(log_daten)
+        kanal_index = _kanal_index_aus_log_daten(log_daten)
         nachricht_text = _nachricht_aus_log_daten(log_daten)
         sender_roh, sender_anzeige = _sender_rohwert_und_anzeige(log_daten)
         pfadsegmente = _ermittle_pfadsegmente(log_daten)
@@ -895,17 +925,25 @@ async def rx_log_modus(
         if not _enthaelt_test_als_wort(nachricht_text):
             return
 
-        if sender_roh in (None, ""):
+        if sender_roh in (None, "") and kanal_index is None:
             print(
-                "[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt für Direktantwort "
+                "[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt und kein Kanalindex verfügbar "
                 f"(kanal={kanal_normalisiert}, text={nachricht_text!r})."
             )
             return
 
-        sender_mention = sender_anzeige if sender_anzeige.startswith("@") else f"@{sender_anzeige}"
+        sender_mention = (
+            sender_anzeige if sender_anzeige.startswith("@") else f"@{sender_anzeige}"
+        ) if sender_anzeige else ""
         pfad_mit_komma = f"({','.join(pfadsegmente)})" if pfadsegmente else "(<kein-pfad>)"
-        antwort = f"{sender_mention} {hop_anzahl} Hops {pfad_mit_komma}"
-        erfolgreich = await _sende_kanalantwort(client, kanal_normalisiert, antwort, sender_roh)
+        antwort = f"{sender_mention} {hop_anzahl} Hops {pfad_mit_komma}".strip()
+        erfolgreich = await _sende_kanalantwort(
+            client,
+            kanal_normalisiert,
+            antwort,
+            sender_roh,
+            kanal_index,
+        )
         if erfolgreich:
             print(
                 "[INFO] Bot-Antwort gesendet: "
