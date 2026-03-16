@@ -678,12 +678,14 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
             await self.modul.rx_log_modus(client, Path("out.jsonl"))
 
         send_msg_with_retry.assert_awaited_once()
+        self.assertEqual(send_msg_with_retry.await_args.args[0], "#test")
+        self.assertIn("@aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899", send_msg_with_retry.await_args.args[1])
+        self.assertIn("3 Hops", send_msg_with_retry.await_args.args[1])
+        self.assertIn("(node-a,node-b,node-c)", send_msg_with_retry.await_args.args[1])
         self.assertEqual(
-            send_msg_with_retry.await_args.args[0],
+            send_msg_with_retry.await_args.kwargs.get("reply_to"),
             "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
         )
-        self.assertIn("Hops=2", send_msg_with_retry.await_args.args[1])
-        self.assertIn("Pfad=node-a -> node-b -> node-c", send_msg_with_retry.await_args.args[1])
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertTrue(any(ausgabe.startswith("[INFO] Bot-Antwort gesendet:") for ausgabe in ausgaben))
 
