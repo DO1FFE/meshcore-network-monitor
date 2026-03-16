@@ -618,12 +618,58 @@ def _normalisiere_kanalname(kanal: Any) -> str:
     """Normalisiert Kanalnamen robust auf #<name> in Kleinbuchstaben."""
     if kanal is None:
         return ""
+    if isinstance(kanal, dict):
+        kanal = _wert_aus_schluesseln(kanal, ["name", "channel", "channel_name", "label", "id"])
+        if kanal is None:
+            return ""
     kanal_text = str(kanal).strip().lower()
     if not kanal_text:
         return ""
     if not kanal_text.startswith("#"):
         kanal_text = f"#{kanal_text}"
     return kanal_text
+
+
+def _kanal_aus_log_daten(log_daten: dict[str, Any]) -> str:
+    """Ermittelt den Kanalnamen robust aus top-level oder verschachtelten Feldern."""
+    kanal_roh = _wert_aus_schluesseln(
+        log_daten,
+        ["channel", "channel_name", "chan", "channelName", "channel_label"],
+    )
+    if isinstance(kanal_roh, dict):
+        kanal_roh = _wert_aus_schluesseln(
+            kanal_roh,
+            ["name", "channel", "channel_name", "channelName", "label", "id"],
+        )
+
+    if kanal_roh is None:
+        payload_roh = log_daten.get("payload")
+        if isinstance(payload_roh, dict):
+            kanal_roh = _wert_aus_schluesseln(
+                payload_roh,
+                ["channel", "channel_name", "chan", "channelName", "channel_label"],
+            )
+
+    return _normalisiere_kanalname(kanal_roh)
+
+
+def _nachricht_aus_log_daten(log_daten: dict[str, Any]) -> str:
+    """Ermittelt den Nachrichtentext robust aus top-level oder verschachtelten Feldern."""
+    nachricht_roh = _wert_aus_schluesseln(
+        log_daten,
+        ["text", "message", "msg", "payload_text", "body", "content"],
+    )
+    if nachricht_roh is None:
+        payload_roh = log_daten.get("payload")
+        if isinstance(payload_roh, dict):
+            nachricht_roh = _wert_aus_schluesseln(
+                payload_roh,
+                ["text", "message", "msg", "payload_text", "body", "content"],
+            )
+
+    if nachricht_roh is None:
+        return ""
+    return str(nachricht_roh).strip()
 
 
 def _enthaelt_test_als_wort(text: str) -> bool:
@@ -804,10 +850,8 @@ async def rx_log_modus(
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
 
-        kanal_roh = _wert_aus_schluesseln(log_daten, ["channel", "channel_name", "chan", "channelName"])
-        kanal_normalisiert = _normalisiere_kanalname(kanal_roh)
-        nachricht_roh = _wert_aus_schluesseln(log_daten, ["text", "message", "msg", "payload_text"])
-        nachricht_text = str(nachricht_roh).strip() if nachricht_roh is not None else ""
+        kanal_normalisiert = _kanal_aus_log_daten(log_daten)
+        nachricht_text = _nachricht_aus_log_daten(log_daten)
         sender_roh, sender_anzeige = _sender_rohwert_und_anzeige(log_daten)
         pfadsegmente = _ermittle_pfadsegmente(log_daten)
         pfad_serialisiert = " -> ".join(pfadsegmente) if pfadsegmente else "<kein Pfad>"
