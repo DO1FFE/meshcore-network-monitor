@@ -722,6 +722,69 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertTrue(any(ausgabe.startswith("[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt") for ausgabe in ausgaben))
 
+    async def test_rx_log_modus_erkennt_test_kanal_aus_channel_objekt(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        send_msg_with_retry = AsyncMock(return_value=SimpleNamespace(type="MSG_SENT"))
+        client = SimpleNamespace(
+            subscribe=subscribe,
+            commands=SimpleNamespace(send_msg_with_retry=send_msg_with_retry),
+        )
+        ereignis = SimpleNamespace(
+            payload={
+                "channel": {"name": " Test "},
+                "message": "test",
+                "sender": "sender-01",
+                "path": ["hop-1", "hop-2"],
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)):
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        send_msg_with_retry.assert_awaited_once()
+        self.assertEqual(send_msg_with_retry.await_args.args[0], "#test")
+
+    async def test_rx_log_modus_erkennt_nachricht_aus_verschachteltem_payload(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        send_msg = AsyncMock(return_value=SimpleNamespace(type="MSG_SENT"))
+        client = SimpleNamespace(
+            subscribe=subscribe,
+            commands=SimpleNamespace(send_msg=send_msg),
+        )
+        ereignis = SimpleNamespace(
+            payload={
+                "channel_name": "#test",
+                "payload": {"message": "Bitte Test ausführen"},
+                "sender": "sender-02",
+                "path": "a -> b",
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)):
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        send_msg.assert_awaited_once()
+        self.assertEqual(send_msg.await_args.args[0], "#test")
+        self.assertIn("2 Hops", send_msg.await_args.args[1])
+
 
 class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
     @classmethod
