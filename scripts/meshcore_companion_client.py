@@ -40,6 +40,10 @@ class CliOptionen:
     ausgabe_pfad: Path
     pin: str | None
     ble_retry_einmal: bool = True
+    bot_aktiv: bool = True
+    hashtag_kanal_name: str = "#test"
+    bot_stichwort: str = "ping"
+    bot_antwort_vorlage: str = "@[{absender}] Pong 🏓 {pfad}"
 
 
 STANDARD_KONFIGURATION = {
@@ -50,6 +54,10 @@ STANDARD_KONFIGURATION = {
     "ausgabe_datei": str(AUSGABE_PFAD_STANDARD),
     "pin": None,
     "ble_retry_einmal": True,
+    "bot_aktiv": True,
+    "hashtag_kanal_name": "#test",
+    "bot_stichwort": "ping",
+    "bot_antwort_vorlage": "@[{absender}] Pong 🏓 {pfad}",
 }
 
 
@@ -408,8 +416,89 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
-async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
+def pfadinfo_aus_hex_payload(hex_payload: str | bytes | bytearray | None) -> str | None:
+    """Ermittelt Hop-/Pfadinfo aus einem RX-Log-Payload-Hexstring."""
+    if not hex_payload:
+        return None
+
+    if isinstance(hex_payload, (bytes, bytearray)):
+        hex_text = hex_payload.hex()
+    else:
+        hex_text = str(hex_payload)
+
+    hex_text = hex_text.lower().replace(" ", "").replace("\n", "").replace("\r", "")
+    if len(hex_text) < 4:
+        return None
+
+    try:
+        pfad_laenge = int(hex_text[2:4], 16)
+    except ValueError:
+        return None
+
+    pfad_start = 4
+    pfad_ende = pfad_start + (pfad_laenge * 2)
+    if len(hex_text) < pfad_ende:
+        return None
+
+    if pfad_laenge == 0:
+        return "(0 hops, direct)"
+
+    pfad_hex = hex_text[pfad_start:pfad_ende]
+    knoten = [pfad_hex[index:index + 2] for index in range(0, len(pfad_hex), 2)]
+    return f"({pfad_laenge} hops, {':'.join(knoten)})"
+
+
+def pfadinfo_aus_rx_log(log_daten: dict[str, Any]) -> str | None:
+    """Ermittelt formatierte Pfadinfo aus einem RX-Log-Eintrag."""
+    pfad = log_daten.get("path")
+    if isinstance(pfad, (list, tuple)):
+        teile = [str(x) for x in pfad if str(x).strip()]
+        if teile:
+            return f"({len(teile)} hops, {':'.join(teile)})"
+    elif isinstance(pfad, str) and pfad.strip():
+        teile = [teil for teil in pfad.replace(",", ":").split(":") if teil.strip()]
+        if teile:
+            return f"({len(teile)} hops, {':'.join(teile)})"
+
+    return pfadinfo_aus_hex_payload(log_daten.get("payload"))
+
+
+def kanalname_normalisieren(name: str | None) -> str:
+    """Normalisiert einen Hashtag-Kanalnamen robust auf Vergleichsform."""
+    text = (name or "").strip().lower()
+    return text[1:] if text.startswith("#") else text
+
+
+async def kanalindex_aufloesen(client: MeshCore, kanal_name: str, max_kanal_index: int = 15) -> int | None:
+    """Sucht den Kanalindex über get_channel anhand eines Kanalnamens."""
+    zielname = kanalname_normalisieren(kanal_name)
+    for index in range(max_kanal_index + 1):
+        try:
+            kanal_event = await client.commands.get_channel(index)
+        except Exception:
+            continue
+
+        if kanal_event is None or kanal_event.type == EventType.ERROR:
+            continue
+
+        payload = kanal_event.payload if isinstance(kanal_event.payload, dict) else {}
+        aktueller_name = (
+            payload.get("name")
+            or payload.get("channel_name")
+            or payload.get("chan_name")
+            or payload.get("label")
+        )
+        if kanalname_normalisieren(aktueller_name) == zielname:
+            return index
+    return None
+
+
+async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path, optionen: CliOptionen) -> None:
     """Kontinuierlicher RX-Log-Modus mit Persistierung von REPEATER-ADVERTs."""
+
+    letzte_pfadinfo_pro_kanal: dict[int, str] = {}
+    auto_fetching_aktiv = False
+    bot_kanal_index: int | None = None
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
@@ -424,6 +513,11 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
         paket_mehrzeilig_ausgeben(paket)
         print()
         print()
+
+        pfadinfo = pfadinfo_aus_rx_log(log_daten)
+        kanal_index_roh = log_daten.get("channel_idx")
+        if isinstance(kanal_index_roh, int) and pfadinfo:
+            letzte_pfadinfo_pro_kanal[kanal_index_roh] = pfadinfo
 
         if ist_advert(log_daten):
             advert = advert_aufbereiten(log_daten)
@@ -441,12 +535,78 @@ async def rx_log_modus(client: MeshCore, ausgabe_pfad: Path) -> None:
 
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 
+    if optionen.bot_aktiv:
+        try:
+            client.set_decrypt_channel_logs = True
+        except Exception:
+            pass
+
+        bot_kanal_index = await kanalindex_aufloesen(client, optionen.hashtag_kanal_name)
+        if bot_kanal_index is None:
+            print(
+                "[WARNUNG] Bot aktiv, aber Hashtag-Kanal wurde nicht gefunden: "
+                f"{optionen.hashtag_kanal_name}."
+            )
+        else:
+            print(
+                f"[INFO] Bot aktiv auf Kanal {optionen.hashtag_kanal_name} "
+                f"(Index {bot_kanal_index}, Stichwort='{optionen.bot_stichwort}')."
+            )
+
+            async def bei_kanal_nachricht(event) -> None:
+                nachricht = event.payload if isinstance(event.payload, dict) else {}
+                kanal_idx = nachricht.get("channel_idx")
+                if kanal_idx != bot_kanal_index:
+                    return
+
+                text = str(nachricht.get("text") or "")
+                stichwort = optionen.bot_stichwort.strip().lower()
+                if stichwort and stichwort not in text.lower():
+                    return
+
+                absender_roh = text.split(":", 1)[0].strip()
+                absender = absender_roh if absender_roh else "Unbekannt"
+                pfad = letzte_pfadinfo_pro_kanal.get(kanal_idx, "(? hops, ?)")
+                antwort = optionen.bot_antwort_vorlage.format(
+                    absender=absender,
+                    pfad=pfad,
+                    kanalindex=kanal_idx,
+                    kanalname=optionen.hashtag_kanal_name,
+                    text=text,
+                )
+
+                print(
+                    f"[INFO] Bot-Antwort in {optionen.hashtag_kanal_name} "
+                    f"(Index {kanal_idx}) wird gesendet: {antwort}"
+                )
+                send_result = await client.commands.send_chan_msg(kanal_idx, antwort)
+                if send_result is None or send_result.type == EventType.ERROR:
+                    print(f"[WARNUNG] Senden der Bot-Antwort fehlgeschlagen: {getattr(send_result, 'payload', None)}")
+
+            client.subscribe(
+                EventType.CHANNEL_MSG_RECV,
+                bei_kanal_nachricht,
+                attribute_filters={"channel_idx": bot_kanal_index},
+            )
+
+        try:
+            await client.start_auto_message_fetching()
+            auto_fetching_aktiv = True
+        except Exception as exc:
+            print(f"[WARNUNG] start_auto_message_fetching fehlgeschlagen: {exc}")
+
     print("[INFO] RX-Log läuft. Mit Strg+C beenden.")
     try:
         while True:
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n[INFO] RX-Log beendet.")
+    finally:
+        if auto_fetching_aktiv:
+            try:
+                await client.stop_auto_message_fetching()
+            except Exception:
+                pass
 
 
 def konfiguration_laden(konfigurations_pfad: Path) -> dict[str, Any]:
@@ -498,6 +658,10 @@ def optionen_aus_argumenten_und_konfiguration(
     ausgabe_datei = args.ausgabe_datei if args.ausgabe_datei is not None else konfiguration.get("ausgabe_datei")
     pin = args.pin if args.pin is not None else konfiguration.get("pin")
     ble_retry_einmal = bool(konfiguration.get("ble_retry_einmal", True))
+    bot_aktiv = bool(konfiguration.get("bot_aktiv", True))
+    hashtag_kanal_name = str(konfiguration.get("hashtag_kanal_name", "#test"))
+    bot_stichwort = str(konfiguration.get("bot_stichwort", "ping"))
+    bot_antwort_vorlage = str(konfiguration.get("bot_antwort_vorlage", "@[{absender}] Pong 🏓 {pfad}"))
 
     return CliOptionen(
         com_port=com_port,
@@ -507,6 +671,10 @@ def optionen_aus_argumenten_und_konfiguration(
         ausgabe_pfad=Path(ausgabe_datei),
         pin=pin,
         ble_retry_einmal=ble_retry_einmal,
+        bot_aktiv=bot_aktiv,
+        hashtag_kanal_name=hashtag_kanal_name,
+        bot_stichwort=bot_stichwort,
+        bot_antwort_vorlage=bot_antwort_vorlage,
     )
 
 
@@ -572,7 +740,7 @@ async def async_hauptprogramm() -> int:
         client = await meshcore_verbinden(optionen)
         await authentifizieren(client, optionen.pin)
         await geraeteinformationen_ausgeben(client)
-        await rx_log_modus(client, optionen.ausgabe_pfad)
+        await rx_log_modus(client, optionen.ausgabe_pfad, optionen)
         return 0
     except Verbindungsfehler as exc:
         print(f"[FEHLER] {exc}")

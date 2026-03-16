@@ -21,6 +21,7 @@ class TestKonfiguration(unittest.TestCase):
             ERROR = "ERROR"
             MSG_SENT = "MSG_SENT"
             RX_LOG_DATA = "RX_LOG_DATA"
+            CHANNEL_MSG_RECV = "CHANNEL_MSG_RECV"
 
         class _DummyMeshCore:
             pass
@@ -407,6 +408,53 @@ class TestAdvertPersistierung(unittest.TestCase):
         self.assertEqual(eingelesen["adv_typ"], 3)
 
 
+class TestKanalBotHilfen(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    def test_pfadinfo_aus_hex_payload_und_rx_log(self):
+        self.assertEqual(
+            self.modul.pfadinfo_aus_hex_payload("aa03a1b2c3ff"),
+            "(3 hops, a1:b2:c3)",
+        )
+        self.assertEqual(
+            self.modul.pfadinfo_aus_hex_payload("aa00ff"),
+            "(0 hops, direct)",
+        )
+        self.assertEqual(
+            self.modul.pfadinfo_aus_rx_log({"path": ["1a", "2b"]}),
+            "(2 hops, 1a:2b)",
+        )
+
+    def test_kanalname_normalisieren_entfernt_hash(self):
+        self.assertEqual(self.modul.kanalname_normalisieren("#test"), "test")
+        self.assertEqual(self.modul.kanalname_normalisieren("test"), "test")
+
+
+class TestKanalindexAufloesen(unittest.IsolatedAsyncioTestCase):
+    @classmethod
+    def setUpClass(cls):
+        if "meshcore_companion_client" not in sys.modules:
+            TestKonfiguration.setUpClass()
+        cls.modul = sys.modules["meshcore_companion_client"]
+
+    async def test_kanalindex_aufloesen_findet_kanal_nach_name(self):
+        async def get_channel(index):
+            if index == 1:
+                return SimpleNamespace(type="CHANNEL_INFO", payload={"name": "#test"})
+            return SimpleNamespace(type=self.modul.EventType.ERROR, payload={})
+
+        client = SimpleNamespace(commands=SimpleNamespace(get_channel=AsyncMock(side_effect=get_channel)))
+
+        index = await self.modul.kanalindex_aufloesen(client, "#test")
+        self.assertEqual(index, 1)
+
+
+
+
 class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
@@ -422,7 +470,16 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
             "sleep",
             AsyncMock(side_effect=asyncio.CancelledError()),
         ), patch("builtins.print") as print_mock:
-            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+            optionen = self.modul.CliOptionen(
+                com_port=None,
+                baudrate=115200,
+                ble_scan=True,
+                timeout=5.0,
+                ausgabe_pfad=Path("out.jsonl"),
+                pin="123456",
+                bot_aktiv=False,
+            )
+            await self.modul.rx_log_modus(client, Path("out.jsonl"), optionen)
 
         ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
         self.assertIn("[INFO] RX-Log läuft. Mit Strg+C beenden.", ausgaben)

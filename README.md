@@ -72,6 +72,38 @@ Akkustand : 87%
 
 Anschließend startet der kontinuierliche RX-Log-Modus mit JSON-Zeilen auf der Konsole (inkl. dekodierter Felder, falls vorhanden).
 
+## Hashtag-Channel-Bot (Ping/Pong)
+
+Der Client kann zusätzlich als einfacher Bot auf einem Hashtag-Channel laufen und automatisch antworten.
+
+Standardverhalten:
+
+- Kanalname: `#test`
+- Stichwort: `ping`
+- Antwortvorlage: `@[{absender}] Pong 🏓 {pfad}`
+
+Wichtig zur MeshCore-Kompatibilität (gemäß PyPI/Beispielen):
+
+- Der Bot nutzt `send_chan_msg(channel_idx, text)` für Channel-Nachrichten.
+- Der Kanalindex wird per `get_channel(index)` über den Kanalnamen aufgelöst.
+- `start_auto_message_fetching()` wird aktiviert, damit `CHANNEL_MSG_RECV`-Events ankommen.
+- Die Pfad-Info wird aus RX-Logs extrahiert und in die Antwort eingesetzt (`{pfad}`).
+
+Konfigurierbar über `meshcore_client_config.json`:
+
+- `bot_aktiv` (`true/false`)
+- `hashtag_kanal_name`
+- `bot_stichwort`
+- `bot_antwort_vorlage`
+
+Platzhalter in `bot_antwort_vorlage`:
+
+- `{absender}`
+- `{pfad}`
+- `{kanalindex}`
+- `{kanalname}`
+- `{text}`
+
 ## Persistierung von REPEATER-ADVERT-Daten
 
 Empfangene RX-Logs werden geprüft. Wenn ein ADVERT vom Typ **REPEATER** erkannt wird, wird ein strukturierter Eintrag als JSON-Line gespeichert.
