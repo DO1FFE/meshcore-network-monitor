@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from getpass import getpass
@@ -605,6 +606,120 @@ def advert_persistieren(pfad: Path, advert_daten: dict[str, Any]) -> None:
         datei.write(json.dumps(advert_daten, ensure_ascii=False, default=str) + "\n")
 
 
+def _wert_aus_schluesseln(daten: dict[str, Any], schluessel: list[str]) -> Any:
+    """Liest den ersten vorhandenen Schlüsselwert aus einem Dictionary."""
+    for eintrag in schluessel:
+        if eintrag in daten and daten[eintrag] not in (None, ""):
+            return daten[eintrag]
+    return None
+
+
+def _normalisiere_kanalname(kanal: Any) -> str:
+    """Normalisiert Kanalnamen robust auf #<name> in Kleinbuchstaben."""
+    if kanal is None:
+        return ""
+    kanal_text = str(kanal).strip().lower()
+    if not kanal_text:
+        return ""
+    if not kanal_text.startswith("#"):
+        kanal_text = f"#{kanal_text}"
+    return kanal_text
+
+
+def _enthaelt_test_als_wort(text: str) -> bool:
+    """Prüft case-insensitive auf das Wort 'Test'."""
+    if not text:
+        return False
+    woerter = re.findall(r"\w+", text.casefold(), flags=re.UNICODE)
+    return "test" in woerter
+
+
+def _pfad_segment_als_text(segment: Any) -> str:
+    """Serialisiert ein Pfadsegment robust in lesbarer Form."""
+    if isinstance(segment, dict):
+        kandidat = _wert_aus_schluesseln(
+            segment,
+            ["public_key", "node_id", "node", "id", "name", "label", "key"],
+        )
+        if kandidat is not None:
+            return str(kandidat).strip()
+        return json.dumps(segment, ensure_ascii=False, sort_keys=True, default=str)
+    if isinstance(segment, (list, tuple, set)):
+        return json.dumps(list(segment), ensure_ascii=False, default=str)
+    return str(segment).strip()
+
+
+def _ermittle_pfadsegmente(log_daten: dict[str, Any]) -> list[str]:
+    """Ermittelt Pfadsegmente aus verschiedenen Event-Feldnamen."""
+    pfad_roh = _wert_aus_schluesseln(log_daten, ["path", "PATH", "route_path", "route", "hops"])
+    if pfad_roh is None:
+        return []
+
+    if isinstance(pfad_roh, str):
+        teile = [teil for teil in re.split(r"\s*->\s*|\s*,\s*|\s+", pfad_roh.strip()) if teil]
+        return teile
+
+    if isinstance(pfad_roh, (list, tuple, set)):
+        return [
+            text
+            for text in (_pfad_segment_als_text(segment) for segment in pfad_roh)
+            if text
+        ]
+
+    segment = _pfad_segment_als_text(pfad_roh)
+    return [segment] if segment else []
+
+
+def _sender_rohwert_und_anzeige(log_daten: dict[str, Any]) -> tuple[Any, str]:
+    """Liefert Senderziel für send_msg und eine menschenlesbare Senderanzeige."""
+    sender_roh = _wert_aus_schluesseln(
+        log_daten,
+        [
+            "sender",
+            "sender_key",
+            "sender_public_key",
+            "from",
+            "from_key",
+            "from_id",
+            "source",
+            "src",
+            "node_id",
+            "public_key",
+        ],
+    )
+    if isinstance(sender_roh, dict):
+        sender_anzeige = str(
+            _wert_aus_schluesseln(sender_roh, ["public_key", "node_id", "id", "name", "key"])
+            or json.dumps(sender_roh, ensure_ascii=False, sort_keys=True, default=str)
+        )
+    elif sender_roh is None:
+        sender_anzeige = ""
+    else:
+        sender_anzeige = str(sender_roh)
+
+    return sender_roh, sender_anzeige.strip()
+
+
+async def _sende_direktantwort(client: MeshCore, empfaenger: Any, nachricht: str) -> bool:
+    """Sendet eine Direktantwort an einen Empfänger, falls die API verfügbar ist."""
+    commands = getattr(client, "commands", None)
+    if commands is None:
+        print("[WARNUNG] Bot-Antwort abgebrochen: client.commands ist nicht verfügbar.")
+        return False
+
+    sendefunktion = getattr(commands, "send_msg_with_retry", None) or getattr(commands, "send_msg", None)
+    if sendefunktion is None:
+        print("[WARNUNG] Bot-Antwort abgebrochen: Weder send_msg_with_retry noch send_msg vorhanden.")
+        return False
+
+    try:
+        await sendefunktion(empfaenger, nachricht)
+        return True
+    except Exception as exc:
+        print(f"[WARNUNG] Bot-Antwort fehlgeschlagen: {exc}")
+        return False
+
+
 async def rx_log_modus(
     client: MeshCore,
     ausgabe_pfad: Path,
@@ -628,6 +743,15 @@ async def rx_log_modus(
 
     async def bei_rx_log(event) -> None:
         log_daten = event.payload if isinstance(event.payload, dict) else {}
+
+        kanal_roh = _wert_aus_schluesseln(log_daten, ["channel", "channel_name", "chan", "channelName"])
+        kanal_normalisiert = _normalisiere_kanalname(kanal_roh)
+        nachricht_roh = _wert_aus_schluesseln(log_daten, ["text", "message", "msg", "payload_text"])
+        nachricht_text = str(nachricht_roh).strip() if nachricht_roh is not None else ""
+        sender_roh, sender_anzeige = _sender_rohwert_und_anzeige(log_daten)
+        pfadsegmente = _ermittle_pfadsegmente(log_daten)
+        pfad_serialisiert = " -> ".join(pfadsegmente) if pfadsegmente else "<kein Pfad>"
+        hop_anzahl = max(len(pfadsegmente) - 1, 0)
 
         if server_url and soll_an_server_gesendet_werden(log_daten):
             if not client_name:
@@ -660,6 +784,31 @@ async def rx_log_modus(
             )
             print()
             print()
+
+        if kanal_normalisiert != "#test":
+            return
+
+        if not _enthaelt_test_als_wort(nachricht_text):
+            return
+
+        if sender_roh in (None, ""):
+            print(
+                "[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt für Direktantwort "
+                f"(kanal={kanal_normalisiert}, text={nachricht_text!r})."
+            )
+            return
+
+        antwort = (
+            "Bot-Antwort empfangen. "
+            f"Kanal={kanal_normalisiert}, Hops={hop_anzahl}, Pfad={pfad_serialisiert}"
+        )
+        erfolgreich = await _sende_direktantwort(client, sender_roh, antwort)
+        if erfolgreich:
+            print(
+                "[INFO] Bot-Antwort gesendet: "
+                f"an={sender_anzeige or '<unbekannt>'}, kanal={kanal_normalisiert}, hops={hop_anzahl}, "
+                f"pfad={pfad_serialisiert}"
+            )
 
     client.subscribe(EventType.RX_LOG_DATA, bei_rx_log)
 

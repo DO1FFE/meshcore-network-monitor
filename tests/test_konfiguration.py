@@ -647,6 +647,79 @@ class TestRxLogModus(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[INFO] RX-Log läuft. Mit Strg+C beenden.", ausgaben)
         self.assertIn("\n[INFO] RX-Log beendet.", ausgaben)
 
+    async def test_rx_log_modus_sendet_bot_direktantwort_nur_im_test_kanal(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        send_msg_with_retry = AsyncMock(return_value=SimpleNamespace(type="MSG_SENT"))
+        client = SimpleNamespace(
+            subscribe=subscribe,
+            commands=SimpleNamespace(send_msg_with_retry=send_msg_with_retry),
+        )
+        ereignis = SimpleNamespace(
+            payload={
+                "channel_name": " #TeSt ",
+                "message": "Das ist ein tEsT für den Bot.",
+                "sender": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+                "path": ["node-a", "node-b", "node-c"],
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)), patch(
+            "builtins.print"
+        ) as print_mock:
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        send_msg_with_retry.assert_awaited_once()
+        self.assertEqual(
+            send_msg_with_retry.await_args.args[0],
+            "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        )
+        self.assertIn("Hops=2", send_msg_with_retry.await_args.args[1])
+        self.assertIn("Pfad=node-a -> node-b -> node-c", send_msg_with_retry.await_args.args[1])
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertTrue(any(ausgabe.startswith("[INFO] Bot-Antwort gesendet:") for ausgabe in ausgaben))
+
+    async def test_rx_log_modus_bot_antwort_wird_ohne_sender_mit_warnung_abgebrochen(self):
+        callback_box = {}
+
+        def subscribe(_ereignis_typ, callback):
+            callback_box["callback"] = callback
+
+        send_msg = AsyncMock(return_value=SimpleNamespace(type="MSG_SENT"))
+        client = SimpleNamespace(
+            subscribe=subscribe,
+            commands=SimpleNamespace(send_msg=send_msg),
+        )
+        ereignis = SimpleNamespace(
+            payload={
+                "channel": "test",
+                "text": "TEST",
+                "path": "node-a -> node-b",
+            }
+        )
+
+        async def fake_sleep(_sekunden):
+            if "callback" in callback_box:
+                await callback_box["callback"](ereignis)
+            raise asyncio.CancelledError()
+
+        with patch.object(self.modul.asyncio, "sleep", AsyncMock(side_effect=fake_sleep)), patch(
+            "builtins.print"
+        ) as print_mock:
+            await self.modul.rx_log_modus(client, Path("out.jsonl"))
+
+        send_msg.assert_not_called()
+        ausgaben = [aufruf.args[0] for aufruf in print_mock.call_args_list if aufruf.args]
+        self.assertTrue(any(ausgabe.startswith("[WARNUNG] Bot-Antwort abgebrochen: Senderfeld fehlt") for ausgabe in ausgaben))
+
 
 class TestServerInfoAusgabe(unittest.IsolatedAsyncioTestCase):
     @classmethod
