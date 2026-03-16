@@ -4,9 +4,5 @@
   "baudrate": 115200,
   "timeout": 10.0,
   "ausgabe_datei": "data/repeater_adverts.jsonl",
-  "pin": null,
-  "bot_aktiv": true,
-  "hashtag_kanal_name": "#test",
-  "bot_stichwort": "ping",
-  "bot_antwort_vorlage": "@[{absender}] Pong 🏓 {pfad}"
+  "pin": null
 }
