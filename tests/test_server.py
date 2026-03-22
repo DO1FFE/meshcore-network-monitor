@@ -604,6 +604,116 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(doppelte, [{"prefix": "0a", "anzahl": 2}, {"prefix": "ab", "anzahl": 2}])
 
+    def test_veraltete_daten_werden_nach_sieben_tagen_entfernt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            zeitgrenze = self.modul.datetime.now(self.modul.timezone.utc) - self.modul.AUFBEWAHRUNGSDAUER
+            alte_zeit = (zeitgrenze - self.modul.timedelta(minutes=1)).isoformat()
+            frische_zeit = (zeitgrenze + self.modul.timedelta(minutes=1)).isoformat()
+
+            repeater_alt = db.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("Alt", "aa11", 50.0, 8.0, alte_zeit),
+            ).lastrowid
+            repeater_neu = db.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("Neu", "bb22", 50.1, 8.1, frische_zeit),
+            ).lastrowid
+            db.verbindung.execute(
+                "INSERT INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+                (repeater_alt, "aa"),
+            )
+            db.verbindung.execute(
+                "INSERT INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+                (repeater_neu, "bb"),
+            )
+            db.verbindung.execute(
+                """
+                INSERT INTO adverts (event_schluessel, received_at, repeater_id, prefix, payload_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("alt-advert", alte_zeit, repeater_alt, "aa", "{}"),
+            )
+            db.verbindung.execute(
+                """
+                INSERT INTO adverts (event_schluessel, received_at, repeater_id, prefix, payload_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("neu-advert", frische_zeit, repeater_neu, "bb", "{}"),
+            )
+            db.verbindung.execute(
+                """
+                INSERT INTO paths (event_schluessel, received_at, source_prefix, path, payload_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("alt-path", alte_zeit, "aa", "aa11", "{}"),
+            )
+            db.verbindung.execute(
+                """
+                INSERT INTO paths (event_schluessel, received_at, source_prefix, path, payload_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("neu-path", frische_zeit, "bb", "bb22", "{}"),
+            )
+            db.verbindung.commit()
+
+            _ = db.map_daten()
+
+            anzahl_repeater = db.verbindung.execute("SELECT COUNT(*) FROM repeaters").fetchone()[0]
+            anzahl_aliases = db.verbindung.execute("SELECT COUNT(*) FROM repeater_aliases").fetchone()[0]
+            anzahl_adverts = db.verbindung.execute("SELECT COUNT(*) FROM adverts").fetchone()[0]
+            anzahl_paths = db.verbindung.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
+
+        self.assertEqual(anzahl_repeater, 1)
+        self.assertEqual(anzahl_aliases, 1)
+        self.assertEqual(anzahl_adverts, 1)
+        self.assertEqual(anzahl_paths, 1)
+
+    def test_double_ignoriert_veraltete_repeater_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            zeitgrenze = self.modul.datetime.now(self.modul.timezone.utc) - self.modul.AUFBEWAHRUNGSDAUER
+            alte_zeit = (zeitgrenze - self.modul.timedelta(minutes=1)).isoformat()
+            frische_zeit = (zeitgrenze + self.modul.timedelta(minutes=1)).isoformat()
+
+            repeater_alt = db.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("Alt", "ab11", 50.0, 8.0, alte_zeit),
+            ).lastrowid
+            repeater_neu = db.verbindung.execute(
+                """
+                INSERT INTO repeaters (name, public_key, latitude, longitude, last_seen)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                ("Neu", "ab22", 50.1, 8.1, frische_zeit),
+            ).lastrowid
+            db.verbindung.execute(
+                "INSERT INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+                (repeater_alt, "ab"),
+            )
+            db.verbindung.execute(
+                "INSERT INTO repeater_aliases (repeater_id, prefix) VALUES (?, ?)",
+                (repeater_neu, "ab"),
+            )
+            db.verbindung.commit()
+
+            doppelte = db.doppelte_prefixe()
+            anzahl_aliases = db.verbindung.execute(
+                "SELECT COUNT(*) FROM repeater_aliases WHERE prefix = 'ab'"
+            ).fetchone()[0]
+
+        self.assertEqual(doppelte, [])
+        self.assertEqual(anzahl_aliases, 1)
+
     def test_baue_doppelte_prefix_listeneintraege_erganzt_unbenutzte_prefixe(self):
         doppelte_prefixe = [{"prefix": "0a", "anzahl": 2}, {"prefix": "ab", "anzahl": 3}]
         unbenutzte_prefixe = ["00", "ab", "ff"]
