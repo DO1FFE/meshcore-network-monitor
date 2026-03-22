@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlparse
 ERLAUBTE_MAX_AGE_STUNDEN = {1, 3, 6, 12, 24, 168}
 ERLAUBTE_MAX_AGE_WERTE_TEXT = ", ".join(str(wert) for wert in sorted(ERLAUBTE_MAX_AGE_STUNDEN)) + ", all"
 CLIENT_TIMEOUT = timedelta(minutes=10)
+AUFBEWAHRUNGSDAUER = timedelta(days=7)
 
 HTML_KARTE = """<!doctype html>
 <html lang=\"de\">
@@ -620,6 +621,7 @@ class Datenbank:
 
     def _initialisieren(self) -> None:
         with self._sperre:
+            self.verbindung.execute("PRAGMA foreign_keys = ON")
             self.verbindung.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS repeaters (
@@ -678,6 +680,7 @@ class Datenbank:
                 """
             )
             self.verbindung.commit()
+            self._loesche_veraltete_daten_gesperrt()
 
     def _migration_altbestand(self) -> None:
         spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(repeaters)")}
@@ -729,6 +732,19 @@ class Datenbank:
         path_spalten = {zeile["name"] for zeile in self.verbindung.execute("PRAGMA table_info(paths)")}
         if "event_schluessel" not in path_spalten:
             self.verbindung.execute("ALTER TABLE paths ADD COLUMN event_schluessel TEXT")
+
+    def _loesche_veraltete_daten_gesperrt(self) -> None:
+        zeitgrenze = (datetime.now(timezone.utc) - AUFBEWAHRUNGSDAUER).isoformat()
+        self.verbindung.execute("DELETE FROM adverts WHERE received_at < ?", (zeitgrenze,))
+        self.verbindung.execute("DELETE FROM paths WHERE received_at < ?", (zeitgrenze,))
+        self.verbindung.execute("DELETE FROM repeaters WHERE last_seen IS NULL OR last_seen < ?", (zeitgrenze,))
+        self.verbindung.execute(
+            """
+            DELETE FROM repeater_aliases
+            WHERE repeater_id NOT IN (SELECT id FROM repeaters)
+            """
+        )
+        self.verbindung.commit()
 
     @staticmethod
     def _event_schluessel(
@@ -884,6 +900,7 @@ class Datenbank:
         longitude = self._koordinate(payload, "adv_lon", "longitude")
 
         with self._sperre:
+            self._loesche_veraltete_daten_gesperrt()
             event_schluessel = self._event_schluessel(
                 typ,
                 public_key=public_key,
@@ -957,6 +974,7 @@ class Datenbank:
             zeitgrenze = zeitgrenze_dt.isoformat()
 
         with self._sperre:
+            self._loesche_veraltete_daten_gesperrt()
             nodes = []
             for zeile in self.verbindung.execute(
                 """
@@ -1116,6 +1134,7 @@ class Datenbank:
 
     def doppelte_prefixe(self) -> list[dict[str, int | str]]:
         with self._sperre:
+            self._loesche_veraltete_daten_gesperrt()
             zeilen = self.verbindung.execute(
                 """
                 SELECT prefix, COUNT(DISTINCT repeater_id) AS anzahl
