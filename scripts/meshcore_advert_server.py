@@ -702,6 +702,12 @@ def baue_doppelte_prefix_listeneintraege(
     return sorted(eintraege_nach_prefix.items(), key=lambda eintrag: eintrag[0])
 
 
+def baue_doppelte_prefix_hinweis(doppelte_prefixe: list[dict[str, int | str]]) -> str:
+    if doppelte_prefixe:
+        return ""
+    return "<p><strong>Hinweis:</strong> Aktuell wurden keine doppelten Prefixe erkannt.</p>"
+
+
 def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Berechnet die Großkreisdistanz zweier Koordinaten in Kilometern."""
     radius_erde_km = 6371.0
@@ -1275,7 +1281,9 @@ class Datenbank:
         with self._sperre:
             self.verbindung.execute("DELETE FROM adverts")
             self.verbindung.execute("DELETE FROM paths")
+            self.verbindung.execute("DELETE FROM repeater_aliases")
             self.verbindung.execute("DELETE FROM repeaters")
+            setze_unbenutzte_prefixe_zurueck(self.unbenutzte_prefix_datei)
             self.verbindung.commit()
 
     def loesche_restliche_datenbank(self) -> None:
@@ -1375,6 +1383,7 @@ class Handler(BaseHTTPRequestHandler):
             doppelte_prefixe = self.datenbank.doppelte_prefixe()
             unbenutzte_prefixe = lese_unbenutzte_prefixe(self.unbenutzte_prefix_datei)
             listeneintraege = baue_doppelte_prefix_listeneintraege(doppelte_prefixe, unbenutzte_prefixe)
+            hinweis = baue_doppelte_prefix_hinweis(doppelte_prefixe)
             listenpunkte = "".join(
                 f"<li><code>{prefix}</code>: {anzeige}</li>" for prefix, anzeige in listeneintraege
             )
@@ -1385,7 +1394,7 @@ class Handler(BaseHTTPRequestHandler):
                 "<style>body{font-family:sans-serif;margin:24px}code{font-family:monospace}</style></head><body>"
                 "<h1>Mehrfach vergebene 1-Byte Prefixe</h1>"
                 "<p>Sortierung: Hex-Werte von 00 bis ff.</p>"
-                f"<ul>{listenpunkte}</ul></body></html>"
+                f"{hinweis}<ul>{listenpunkte}</ul></body></html>"
             ).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
