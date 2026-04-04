@@ -512,7 +512,7 @@ HTML_ADMIN = """<!doctype html>
     </section>
     <section class="aktion">
       <h2>Restliche Datenbank löschen</h2>
-      <p>Löscht alle gespeicherten ADVERT-/PATH-Daten und Zuordnungen.</p>
+      <p>Löscht alle gespeicherten ADVERT-/PATH-Daten inklusive der Einträge aus der /double-Ansicht.</p>
       <form method="post" action="/admin/clear-database">
         <button class="button" type="submit">Restliche Datenbank löschen</button>
       </form>
@@ -1277,7 +1277,7 @@ class Datenbank:
             self.verbindung.commit()
 
     def loesche_restliche_daten(self) -> None:
-        """Löscht verbleibende Nutzdaten (`adverts`, `paths`, `repeaters`) in FK-sicherer Reihenfolge."""
+        """Löscht verbleibende Nutzdaten inklusive `/double`-relevanter Zuordnungen."""
         with self._sperre:
             self.verbindung.execute("DELETE FROM adverts")
             self.verbindung.execute("DELETE FROM paths")
@@ -1414,7 +1414,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if pfad == "/admin/clear-database":
             self.datenbank.loesche_restliche_daten()
-            self._html_antwort(HTTPStatus.OK, self._admin_html("Die restliche Datenbank wurde erfolgreich gelöscht."))
+            self._html_antwort(
+                HTTPStatus.OK,
+                self._admin_html("Die restliche Datenbank inklusive /double-Daten wurde erfolgreich gelöscht."),
+            )
             return
 
         if pfad != "/api/events":
