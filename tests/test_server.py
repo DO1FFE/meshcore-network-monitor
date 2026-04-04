@@ -262,12 +262,12 @@ class TestAdvertServer(unittest.TestCase):
         self.assertEqual(anzahl_aliase, 0)
         self.assertEqual(adverts_mit_prefix, 0)
         self.assertEqual(paths_mit_source_prefix, 0)
-        self.assertEqual(len(prefixe), 256)
-        self.assertIn("a1", prefixe)
+        self.assertEqual(prefixe, [f"{wert:02x}" for wert in range(256)])
 
     def test_loesche_restliche_daten_entfernt_gesamten_inhalt(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", datei)
             db.speichere_event(
                 {
                     "payload_typename": "ADVERT",
@@ -289,11 +289,15 @@ class TestAdvertServer(unittest.TestCase):
             anzahl_paths = db.verbindung.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
             anzahl_aliase = db.verbindung.execute("SELECT COUNT(*) FROM repeater_aliases").fetchone()[0]
             anzahl_repeater = db.verbindung.execute("SELECT COUNT(*) FROM repeaters").fetchone()[0]
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+            doppelte = db.doppelte_prefixe()
 
         self.assertEqual(anzahl_adverts, 0)
         self.assertEqual(anzahl_paths, 0)
         self.assertEqual(anzahl_aliase, 0)
         self.assertEqual(anzahl_repeater, 0)
+        self.assertEqual(prefixe, [f"{wert:02x}" for wert in range(256)])
+        self.assertEqual(doppelte, [])
 
     def test_map_daten_enthaelt_knoten_und_kanten(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -808,6 +812,13 @@ class TestAdvertServer(unittest.TestCase):
         self.assertEqual(eintraege[171], ("ab", "3"))
         self.assertEqual(eintraege[255], ("ff", "*** BISHER UNBENUTZT ***"))
         self.assertIn(("7e", "1"), eintraege)
+
+    def test_baue_doppelte_prefix_hinweis_erscheint_nur_ohne_doppelte(self):
+        mit_doppelten = self.modul.baue_doppelte_prefix_hinweis([{"prefix": "ab", "anzahl": 2}])
+        ohne_doppelte = self.modul.baue_doppelte_prefix_hinweis([])
+
+        self.assertEqual(mit_doppelten, "")
+        self.assertIn("keine doppelten Prefixe", ohne_doppelte)
 
     def test_map_daten_bidirektionale_kante_wird_uebernommen(self):
         with tempfile.TemporaryDirectory() as tmp:
