@@ -29,6 +29,13 @@ class TestAdvertServer(unittest.TestCase):
         self.assertIn('<option value=\"all\" selected>ALLE</option>', html_karte)
         self.assertIn('<span id=\"aktiver-filter\">ALLE</span>', html_karte)
 
+    def test_html_admin_enthaelt_formulare_und_button_texte(self):
+        html_admin = self.modul.HTML_ADMIN
+        self.assertIn('action=\"/admin/reset-prefixes\"', html_admin)
+        self.assertIn('action=\"/admin/clear-database\"', html_admin)
+        self.assertIn('Prefixe löschen', html_admin)
+        self.assertIn('Restliche Datenbank löschen', html_admin)
+
     def test_max_age_filter_parst_all_ueber_max_age(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})
         self.assertIsNone(stunden)
@@ -100,6 +107,17 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertNotIn("a1", prefixe)
         self.assertEqual(len(prefixe), 255)
+
+    def test_setze_unbenutzte_prefixe_zurueck_stellt_alle_prefixe_wieder_her(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            self.modul.initialisiere_unbenutzte_prefixe(datei)
+            self.modul.markiere_prefix_als_benutzt(datei, "a1")
+            self.modul.setze_unbenutzte_prefixe_zurueck(datei)
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertEqual(len(prefixe), 256)
+        self.assertIn("a1", prefixe)
 
     def test_speichere_event_entfernt_prefix_aus_unbenutzter_datei(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,6 +230,36 @@ class TestAdvertServer(unittest.TestCase):
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             with self.assertRaises(ValueError):
                 db.speichere_event({"payload_typename": "MSG", "text": "x"})
+
+    def test_loesche_restliche_datenbank_entfernt_gesamten_inhalt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "path": "c3d4",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "PATH",
+                    "public_key": "a1b2ff00",
+                    "path": "a1b2 c3d4",
+                }
+            )
+
+            db.loesche_restliche_datenbank()
+            anzahl_adverts = db.verbindung.execute("SELECT COUNT(*) FROM adverts").fetchone()[0]
+            anzahl_paths = db.verbindung.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
+            anzahl_aliase = db.verbindung.execute("SELECT COUNT(*) FROM repeater_aliases").fetchone()[0]
+            anzahl_repeater = db.verbindung.execute("SELECT COUNT(*) FROM repeaters").fetchone()[0]
+
+        self.assertEqual(anzahl_adverts, 0)
+        self.assertEqual(anzahl_paths, 0)
+        self.assertEqual(anzahl_aliase, 0)
+        self.assertEqual(anzahl_repeater, 0)
 
     def test_map_daten_enthaelt_knoten_und_kanten(self):
         with tempfile.TemporaryDirectory() as tmp:

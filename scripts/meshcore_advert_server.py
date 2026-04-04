@@ -428,6 +428,100 @@ HTML_KARTE = """<!doctype html>
 </html>
 """
 
+HTML_ADMIN = """<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MeshCore Administration</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    main {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+    h1 {
+      margin-top: 0;
+      margin-bottom: 8px;
+    }
+    .beschreibung {
+      margin-top: 0;
+      margin-bottom: 20px;
+      color: #334155;
+    }
+    .kartenlink {
+      display: inline-block;
+      margin-bottom: 18px;
+      text-decoration: none;
+      color: #1d4ed8;
+      font-weight: 600;
+    }
+    .aktion {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .aktion h2 {
+      margin: 0 0 6px 0;
+      font-size: 1.1rem;
+    }
+    .aktion p {
+      margin: 0 0 10px 0;
+      color: #334155;
+    }
+    .button {
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 8px 12px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .status {
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Administration</h1>
+    <p class="beschreibung">Hier können Verwaltungsaktionen ohne Client-Anpassungen ausgelöst werden.</p>
+    <a class="kartenlink" href="/">Zurück zur Live-Karte</a>
+    {status_hinweis}
+    <section class="aktion">
+      <h2>Prefixe zurücksetzen</h2>
+      <p>Setzt die Datei der unbenutzten Prefixe zurück.</p>
+      <form method="post" action="/admin/reset-prefixes">
+        <button class="button" type="submit">Prefixe löschen</button>
+      </form>
+    </section>
+    <section class="aktion">
+      <h2>Restliche Datenbank löschen</h2>
+      <p>Löscht alle gespeicherten ADVERT-/PATH-Daten und Zuordnungen.</p>
+      <form method="post" action="/admin/clear-database">
+        <button class="button" type="submit">Restliche Datenbank löschen</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
 
 def zeitstempel_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -565,6 +659,15 @@ def lese_unbenutzte_prefixe(dateipfad: Path) -> list[str]:
         return _prefixe_aus_inhalt(inhalt)
 
 
+def setze_unbenutzte_prefixe_zurueck(dateipfad: Path) -> None:
+    initialisiere_unbenutzte_prefixe(dateipfad)
+    lock_pfad = _lock_pfad_fuer(dateipfad)
+    with lock_pfad.open("a+", encoding="utf-8") as lock_datei:
+        fcntl.flock(lock_datei.fileno(), fcntl.LOCK_EX)
+        alle_prefixe = [f"{wert:02x}" for wert in range(256)]
+        _schreibe_prefixdatei_atomar(dateipfad, alle_prefixe)
+
+
 def markiere_prefix_als_benutzt(dateipfad: Path, prefix: str) -> None:
     normalisiert = _normalisiere_prefix(prefix)
     if not normalisiert:
@@ -612,6 +715,7 @@ def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 class Datenbank:
     def __init__(self, pfad: Path, unbenutzte_prefix_datei: Path):
+        self.pfad = pfad
         self.unbenutzte_prefix_datei = unbenutzte_prefix_datei
         initialisiere_unbenutzte_prefixe(self.unbenutzte_prefix_datei)
         self.verbindung = sqlite3.connect(pfad, check_same_thread=False)
@@ -1147,6 +1251,14 @@ class Datenbank:
             )
             return [{"prefix": zeile["prefix"], "anzahl": zeile["anzahl"]} for zeile in zeilen]
 
+    def loesche_restliche_datenbank(self) -> None:
+        with self._sperre:
+            self.verbindung.execute("DELETE FROM adverts")
+            self.verbindung.execute("DELETE FROM paths")
+            self.verbindung.execute("DELETE FROM repeater_aliases")
+            self.verbindung.execute("DELETE FROM repeaters")
+            self.verbindung.commit()
+
 
 class Handler(BaseHTTPRequestHandler):
     datenbank: Datenbank
@@ -1182,17 +1294,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(roh)
 
+    def _html_antwort(self, status: HTTPStatus, html_text: str) -> None:
+        roh = html_text.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(roh)))
+        self.end_headers()
+        self.wfile.write(roh)
+
+    def _admin_html(self, status_text: str | None = None) -> str:
+        if not status_text:
+            status_hinweis = ""
+        else:
+            status_hinweis = f"<p class=\"status\">{status_text}</p>"
+        return HTML_ADMIN.format(status_hinweis=status_hinweis)
+
     def do_GET(self) -> None:  # noqa: N802
         aufgeteilt = urlparse(self.path)
         pfad = aufgeteilt.path
         parameter = parse_qs(aufgeteilt.query)
         if pfad == "/":
-            roh = HTML_KARTE.encode("utf-8")
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(roh)))
-            self.end_headers()
-            self.wfile.write(roh)
+            html_mit_admin_link = HTML_KARTE.replace(
+                "</footer>",
+                " · <a href=\"/admin\">Administration</a></footer>",
+            )
+            self._html_antwort(HTTPStatus.OK, html_mit_admin_link)
+            return
+
+        if pfad == "/admin":
+            status_text = parameter.get("status", [None])[0]
+            self._html_antwort(HTTPStatus.OK, self._admin_html(status_text))
             return
 
         if pfad == "/api/map-data":
@@ -1244,6 +1375,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         pfad = urlparse(self.path).path
+        if pfad == "/admin/reset-prefixes":
+            setze_unbenutzte_prefixe_zurueck(self.unbenutzte_prefix_datei)
+            self._html_antwort(HTTPStatus.OK, self._admin_html("Prefix-Datei wurde erfolgreich zurückgesetzt."))
+            return
+
+        if pfad == "/admin/clear-database":
+            self.datenbank.loesche_restliche_datenbank()
+            self._html_antwort(HTTPStatus.OK, self._admin_html("Die restliche Datenbank wurde erfolgreich gelöscht."))
+            return
+
         if pfad != "/api/events":
             self._json_antwort(HTTPStatus.NOT_FOUND, {"fehler": "nicht gefunden"})
             return
