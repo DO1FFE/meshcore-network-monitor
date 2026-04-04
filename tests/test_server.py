@@ -35,6 +35,7 @@ class TestAdvertServer(unittest.TestCase):
         self.assertIn('action=\"/admin/clear-database\"', html_admin)
         self.assertIn('Prefixe löschen', html_admin)
         self.assertIn('Restliche Datenbank löschen', html_admin)
+        self.assertIn('/double-Ansicht', html_admin)
 
     def test_max_age_filter_parst_all_ueber_max_age(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})
