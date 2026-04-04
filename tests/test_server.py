@@ -231,7 +231,41 @@ class TestAdvertServer(unittest.TestCase):
             with self.assertRaises(ValueError):
                 db.speichere_event({"payload_typename": "MSG", "text": "x"})
 
-    def test_loesche_restliche_datenbank_entfernt_gesamten_inhalt(self):
+    def test_loesche_prefix_daten_leert_aliase_und_setzt_prefixe_zurueck(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            datei = Path(tmp) / "unbenutzte_prefixe.txt"
+            db = self.modul.Datenbank(Path(tmp) / "karte.db", datei)
+            db.speichere_event(
+                {
+                    "payload_typename": "ADVERT",
+                    "adv_name": "R1",
+                    "adv_key": "a1b2ff00",
+                    "path": "c3d4",
+                }
+            )
+            db.speichere_event(
+                {
+                    "payload_typename": "PATH",
+                    "public_key": "a1b2ff00",
+                    "path": "a1b2 c3d4",
+                }
+            )
+
+            db.loesche_prefix_daten()
+            anzahl_aliase = db.verbindung.execute("SELECT COUNT(*) FROM repeater_aliases").fetchone()[0]
+            adverts_mit_prefix = db.verbindung.execute("SELECT COUNT(*) FROM adverts WHERE prefix IS NOT NULL").fetchone()[0]
+            paths_mit_source_prefix = db.verbindung.execute(
+                "SELECT COUNT(*) FROM paths WHERE source_prefix IS NOT NULL"
+            ).fetchone()[0]
+            prefixe = self.modul.lese_unbenutzte_prefixe(datei)
+
+        self.assertEqual(anzahl_aliase, 0)
+        self.assertEqual(adverts_mit_prefix, 0)
+        self.assertEqual(paths_mit_source_prefix, 0)
+        self.assertEqual(len(prefixe), 256)
+        self.assertIn("a1", prefixe)
+
+    def test_loesche_restliche_daten_entfernt_gesamten_inhalt(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
             db.speichere_event(
@@ -250,7 +284,7 @@ class TestAdvertServer(unittest.TestCase):
                 }
             )
 
-            db.loesche_restliche_datenbank()
+            db.loesche_restliche_daten()
             anzahl_adverts = db.verbindung.execute("SELECT COUNT(*) FROM adverts").fetchone()[0]
             anzahl_paths = db.verbindung.execute("SELECT COUNT(*) FROM paths").fetchone()[0]
             anzahl_aliase = db.verbindung.execute("SELECT COUNT(*) FROM repeater_aliases").fetchone()[0]

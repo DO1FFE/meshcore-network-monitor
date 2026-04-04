@@ -714,6 +714,16 @@ def distanz_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 class Datenbank:
+    """SQLite-Zugriffsschicht für ADVERT/PATH-Daten.
+
+    Abgrenzung der Löschoperationen:
+    - Prefix-Daten: Präfix-Aliaszuordnungen (`repeater_aliases`) sowie die
+      prefixbezogenen Spaltenwerte in Events (`adverts.prefix`,
+      `paths.source_prefix`) plus die Datei mit unbenutzten Prefixen.
+    - Restliche Daten: verbleibende Nutzdaten ohne Prefix-Fokus
+      (`adverts`, `paths`, `repeaters`).
+    """
+
     def __init__(self, pfad: Path, unbenutzte_prefix_datei: Path):
         self.pfad = pfad
         self.unbenutzte_prefix_datei = unbenutzte_prefix_datei
@@ -1251,13 +1261,26 @@ class Datenbank:
             )
             return [{"prefix": zeile["prefix"], "anzahl": zeile["anzahl"]} for zeile in zeilen]
 
-    def loesche_restliche_datenbank(self) -> None:
+    def loesche_prefix_daten(self) -> None:
+        """Löscht ausschließlich prefixbezogene Daten und setzt die Prefix-Datei zurück."""
+        with self._sperre:
+            self.verbindung.execute("DELETE FROM repeater_aliases")
+            self.verbindung.execute("UPDATE adverts SET prefix = NULL")
+            self.verbindung.execute("UPDATE paths SET source_prefix = NULL")
+            setze_unbenutzte_prefixe_zurueck(self.unbenutzte_prefix_datei)
+            self.verbindung.commit()
+
+    def loesche_restliche_daten(self) -> None:
+        """Löscht verbleibende Nutzdaten (`adverts`, `paths`, `repeaters`) in FK-sicherer Reihenfolge."""
         with self._sperre:
             self.verbindung.execute("DELETE FROM adverts")
             self.verbindung.execute("DELETE FROM paths")
-            self.verbindung.execute("DELETE FROM repeater_aliases")
             self.verbindung.execute("DELETE FROM repeaters")
             self.verbindung.commit()
+
+    def loesche_restliche_datenbank(self) -> None:
+        """Abwärtskompatibler Alias für bestehende Aufrufer."""
+        self.loesche_restliche_daten()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1376,12 +1399,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         pfad = urlparse(self.path).path
         if pfad == "/admin/reset-prefixes":
-            setze_unbenutzte_prefixe_zurueck(self.unbenutzte_prefix_datei)
+            self.datenbank.loesche_prefix_daten()
             self._html_antwort(HTTPStatus.OK, self._admin_html("Prefix-Datei wurde erfolgreich zurückgesetzt."))
             return
 
         if pfad == "/admin/clear-database":
-            self.datenbank.loesche_restliche_datenbank()
+            self.datenbank.loesche_restliche_daten()
             self._html_antwort(HTTPStatus.OK, self._admin_html("Die restliche Datenbank wurde erfolgreich gelöscht."))
             return
 
