@@ -502,7 +502,7 @@ HTML_ADMIN = """<!doctype html>
     <h1>Administration</h1>
     <p class="beschreibung">Hier können Verwaltungsaktionen ohne Client-Anpassungen ausgelöst werden.</p>
     <a class="kartenlink" href="/">Zurück zur Live-Karte</a>
-    {status_hinweis}
+    __STATUS_HINWEIS__
     <section class="aktion">
       <h2>Prefixe zurücksetzen</h2>
       <p>Setzt die Datei der unbenutzten Prefixe zurück.</p>
@@ -1338,7 +1338,7 @@ class Handler(BaseHTTPRequestHandler):
             status_hinweis = ""
         else:
             status_hinweis = f"<p class=\"status\">{status_text}</p>"
-        return HTML_ADMIN.format(status_hinweis=status_hinweis)
+        return HTML_ADMIN.replace("__STATUS_HINWEIS__", status_hinweis)
 
     def do_GET(self) -> None:  # noqa: N802
         aufgeteilt = urlparse(self.path)

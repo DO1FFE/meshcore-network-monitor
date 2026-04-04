@@ -37,6 +37,13 @@ class TestAdvertServer(unittest.TestCase):
         self.assertIn('Restliche Datenbank löschen', html_admin)
         self.assertIn('/double-Ansicht', html_admin)
 
+    def test_admin_html_rendering_ersetzt_status_ohne_template_fehler(self):
+        handler = self.modul.Handler.__new__(self.modul.Handler)
+        html_admin = handler._admin_html("Alles gut")
+
+        self.assertIn("<p class=\"status\">Alles gut</p>", html_admin)
+        self.assertNotIn("__STATUS_HINWEIS__", html_admin)
+
     def test_max_age_filter_parst_all_ueber_max_age(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})
         self.assertIsNone(stunden)
