@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 
 class TestAdvertServer(unittest.TestCase):
@@ -28,6 +29,18 @@ class TestAdvertServer(unittest.TestCase):
         html_karte = self.modul.HTML_KARTE
         self.assertIn('<option value=\"all\" selected>ALLE</option>', html_karte)
         self.assertIn('<span id=\"aktiver-filter\">ALLE</span>', html_karte)
+
+    def test_root_antwort_enthaelt_keinen_admin_link(self):
+        handler = self.modul.Handler.__new__(self.modul.Handler)
+        handler.path = "/"
+        handler._html_antwort = Mock()
+
+        self.modul.Handler.do_GET(handler)
+
+        handler._html_antwort.assert_called_once_with(self.modul.HTTPStatus.OK, self.modul.HTML_KARTE)
+        ausgeliefertes_html = handler._html_antwort.call_args.args[1]
+        self.assertNotIn('href="/admin"', ausgeliefertes_html)
+        self.assertNotIn("Administration", ausgeliefertes_html)
 
     def test_html_admin_enthaelt_formulare_und_button_texte(self):
         html_admin = self.modul.HTML_ADMIN

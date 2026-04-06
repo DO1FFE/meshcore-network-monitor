@@ -1345,11 +1345,7 @@ class Handler(BaseHTTPRequestHandler):
         pfad = aufgeteilt.path
         parameter = parse_qs(aufgeteilt.query)
         if pfad == "/":
-            html_mit_admin_link = HTML_KARTE.replace(
-                "</footer>",
-                " · <a href=\"/admin\">Administration</a></footer>",
-            )
-            self._html_antwort(HTTPStatus.OK, html_mit_admin_link)
+            self._html_antwort(HTTPStatus.OK, HTML_KARTE)
             return
 
         if pfad == "/admin":
