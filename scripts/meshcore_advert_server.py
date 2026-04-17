@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import html
 import json
 import math
 import os
@@ -1337,7 +1338,8 @@ class Handler(BaseHTTPRequestHandler):
         if not status_text:
             status_hinweis = ""
         else:
-            status_hinweis = f"<p class=\"status\">{status_text}</p>"
+            escaped_status_text = html.escape(status_text, quote=True)
+            status_hinweis = f"<p class=\"status\">{escaped_status_text}</p>"
         return HTML_ADMIN.replace("__STATUS_HINWEIS__", status_hinweis)
 
     def do_GET(self) -> None:  # noqa: N802
