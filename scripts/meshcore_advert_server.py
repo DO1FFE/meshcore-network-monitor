@@ -25,6 +25,7 @@ ERLAUBTE_MAX_AGE_STUNDEN = {1, 3, 6, 12, 24, 168}
 ERLAUBTE_MAX_AGE_WERTE_TEXT = ", ".join(str(wert) for wert in sorted(ERLAUBTE_MAX_AGE_STUNDEN)) + ", all"
 CLIENT_TIMEOUT = timedelta(minutes=10)
 AUFBEWAHRUNGSDAUER = timedelta(days=7)
+MAXIMALE_POST_NUTZLAST_BYTES = 5 * 1024 * 1024
 
 HTML_KARTE = """<!doctype html>
 <html lang=\"de\">
@@ -1422,7 +1423,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json_antwort(HTTPStatus.NOT_FOUND, {"fehler": "nicht gefunden"})
             return
 
-        laenge = int(self.headers.get("Content-Length", "0"))
+        try:
+            laenge = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "Ungültiger Content-Length-Header"})
+            return
+
+        if laenge < 0:
+            self._json_antwort(HTTPStatus.BAD_REQUEST, {"fehler": "Ungültiger Content-Length-Header"})
+            return
+
+        if laenge > MAXIMALE_POST_NUTZLAST_BYTES:
+            self._json_antwort(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                {"fehler": f"Payload zu groß (maximal {MAXIMALE_POST_NUTZLAST_BYTES} Bytes)"},
+            )
+            return
+
         inhalt = self.rfile.read(laenge)
         try:
             payload = json.loads(inhalt.decode("utf-8"))
