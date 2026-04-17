@@ -256,6 +256,21 @@ class TestAdvertServer(unittest.TestCase):
 
         self.assertEqual(anzahl_paths, 1)
 
+    def test_do_post_liefert_bad_request_bei_ungueltigem_content_length(self):
+        handler = self.modul.Handler.__new__(self.modul.Handler)
+        handler.path = "/api/events"
+        handler.headers = {"Content-Length": "ungueltig"}
+        handler.rfile = Mock()
+        handler._json_antwort = Mock()
+
+        self.modul.Handler.do_POST(handler)
+
+        handler._json_antwort.assert_called_once_with(
+            self.modul.HTTPStatus.BAD_REQUEST,
+            {"fehler": "Ungültiger Content-Length-Header"},
+        )
+        handler.rfile.read.assert_not_called()
+
     def test_datenbank_speichert_nur_advert_und_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = self.modul.Datenbank(Path(tmp) / "karte.db", Path(tmp) / "unbenutzte_prefixe.txt")
