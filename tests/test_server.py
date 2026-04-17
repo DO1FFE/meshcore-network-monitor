@@ -57,6 +57,16 @@ class TestAdvertServer(unittest.TestCase):
         self.assertIn("<p class=\"status\">Alles gut</p>", html_admin)
         self.assertNotIn("__STATUS_HINWEIS__", html_admin)
 
+    def test_admin_html_rendering_escaped_status_text_ohne_roh_html(self):
+        handler = self.modul.Handler.__new__(self.modul.Handler)
+        status_text = '<script>alert("xss")</script><img src=x onerror=alert(1)>'
+        html_admin = handler._admin_html(status_text)
+
+        self.assertIn("&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;", html_admin)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html_admin)
+        self.assertNotIn("<script>", html_admin)
+        self.assertNotIn("<img src=x onerror=alert(1)>", html_admin)
+
     def test_max_age_filter_parst_all_ueber_max_age(self):
         stunden, schalter = self.modul.max_age_filter_aus_parametern({"max_age": ["all"]})
         self.assertIsNone(stunden)
